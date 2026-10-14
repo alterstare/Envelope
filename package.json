@@ -1,7 +1,7 @@
 {
   "name": "envelope",
   "productName": "Envelope",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "동인 음성 작품을 자막과 함께 듣는 PC 플레이어",
   "main": "./out/main/index.js",
   "author": "alterstare",
@@ -49,7 +49,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/alterstare/Env.git"
+    "url": "https://github.com/alterstare/Envelope.git"
   },
-  "homepage": "https://github.com/alterstare/Env"
+  "homepage": "https://github.com/alterstare/Envelope"
 }

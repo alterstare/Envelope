@@ -49,6 +49,13 @@ export const IPC = {
   setOnTop: 'env:window:onTop',
   windowState: 'env:window:state', // main → renderer
   volPop: 'env:window:volPop', // 최소화 모드 volume pop-up: show / leave / value / hide
+  // inside Halftone: the separate big window asks the host app (bar / panel …)
+  hostRequest: 'env:host:request',
+  // the big window shows the panel's player: state down, commands up
+  mirror: 'env:mirror', // panel → main
+  mirrorIn: 'env:mirror:in', // main → big window
+  remoteCmd: 'env:remote:cmd', // big window → main
+  remoteCmdIn: 'env:remote:cmd:in', // main → panel
   volPopInput: 'env:window:volPopInput', // main → renderer: the pop-up's slider moved
   autoSub: 'env:autosub:run',
   engineStatus: 'env:asr:status',
@@ -78,6 +85,18 @@ export const IPC = {
 } as const
 
 // Finished job summary (shown as a toast / status line).
+// Inside Halftone the player lives in the panel frame (kept alive, even
+// hidden); the separate big window and the bottom bar only show it. What the
+// screen asks of the host app:
+//   window = open the big window · panel = back to the right panel ·
+//   bar = the bar at Halftone's bottom · close = close the player ·
+//   lift = the bar needs this much room above it for a moment (volume)
+export type HostRequest = { what: 'window' | 'panel' | 'bar' | 'close' } | { what: 'lift'; px: number }
+export interface RemoteCommand {
+  fn: string
+  args: unknown[]
+}
+
 export type VolPopCommand =
   | { action: 'show'; rect: { x: number; y: number; w: number; h: number }; value: number; colors: Record<string, string> }
   | { action: 'leave' }
@@ -167,6 +186,12 @@ export interface Api {
   setOnTop: (on: boolean) => Promise<void>
   onWindowState: (cb: (s: WindowState) => void) => () => void
   volPop: (c: VolPopCommand) => void
+  // inside Halftone
+  hostRequest: (r: HostRequest) => void
+  mirror: (state: unknown) => void
+  onMirror: (cb: (state: unknown) => void) => () => void
+  remoteCmd: (c: RemoteCommand) => void
+  onRemoteCmd: (cb: (c: RemoteCommand) => void) => () => void
   onVolPopInput: (cb: (v: number) => void) => () => void
   // 자동 자막 · 번역 (Phase 5)
   autoSub: (workId: number, opts: AutoSubOptions) => Promise<JobSummary>

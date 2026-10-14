@@ -15,7 +15,7 @@ import { NewerDataError } from '../core/db'
 import { isInside, mimeOf, parseRange } from '../core/media'
 import { thumbnail } from '../core/thumbs'
 import { IPC, MEDIA_SCHEME } from '../shared/ipc'
-import type { EnvStatus, JobSummary } from '../shared/ipc'
+import type { EnvStatus, HostRequest, JobSummary, RemoteCommand } from '../shared/ipc'
 import type { AutoSubOptions, ScriptSubOptions, CoverItem, Cue, GlossaryEntry, RenameItem, SePref, Settings, SubLang, ToolResult, WavItem, WhisperModelId } from '../shared/types'
 
 export interface EnvHostOptions {
@@ -31,6 +31,10 @@ export interface EnvHostOptions {
   onTheme?: (theme: Settings['theme']) => void
   onSettingsSaved?: (patch: Partial<Settings>, s: Settings) => void
   encodeWorker?: string // built encodeWorker.js (default: next to this file)
+  // Halftone: its separate big window (shows the panel's player) and what the
+  // screens ask of it (big window / panel / bar / close)
+  remote?: () => Electron.WebContents | null
+  onHostRequest?: (r: HostRequest, from: 'panel' | 'window') => void
 }
 
 let opts: EnvHostOptions
@@ -352,6 +356,16 @@ export function initEnv(o: EnvHostOptions): EnvStatus {
   ipcMain.handle(IPC.status, () => (status.ready ? status : open()))
   ipcMain.handle(IPC.retryLock, () => (status.ready ? status : open()))
   ipcMain.handle(IPC.start, () => startEnv())
+  // big window ⇄ panel player (Halftone)
+  ipcMain.removeAllListeners(IPC.mirror)
+  ipcMain.on(IPC.mirror, (_e, s: unknown) => {
+    const r = o.remote?.()
+    if (r && !r.isDestroyed()) r.send(IPC.mirrorIn, s)
+  })
+  ipcMain.removeAllListeners(IPC.remoteCmd)
+  ipcMain.on(IPC.remoteCmd, (_e, c: RemoteCommand) => send(IPC.remoteCmdIn, c))
+  ipcMain.removeAllListeners(IPC.hostRequest)
+  ipcMain.on(IPC.hostRequest, (e, r: HostRequest) => o.onHostRequest?.(r, o.remote?.() === e.sender ? 'window' : 'panel'))
   // The media protocol is there from the start (a handler added only once the
   // data folder opens would miss the first requests in an embedding frame).
   handleMedia()

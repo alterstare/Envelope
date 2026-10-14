@@ -1,6 +1,6 @@
 import type { IpcRenderer } from 'electron'
 import { IPC, MEDIA_SCHEME } from '../shared/ipc'
-import type { Api, JobSummary, UpdateStatus, WindowState } from '../shared/ipc'
+import type { Api, JobSummary, RemoteCommand, UpdateStatus, WindowState } from '../shared/ipc'
 import type { ProgressEvent } from '../shared/types'
 
 // The renderer API over IPC — shared by Env's own preload and Halftone's
@@ -63,6 +63,11 @@ export function createApi(ipcRenderer: IpcRenderer): Api {
     setOnTop: (on) => ipcRenderer.invoke(IPC.setOnTop, on),
     onWindowState: (cb) => on<WindowState>(IPC.windowState, cb),
     volPop: (c) => ipcRenderer.send(IPC.volPop, c),
+    hostRequest: (r) => ipcRenderer.send(IPC.hostRequest, r),
+    mirror: (s) => ipcRenderer.send(IPC.mirror, s),
+    onMirror: (cb) => on<unknown>(IPC.mirrorIn, cb),
+    remoteCmd: (c) => ipcRenderer.send(IPC.remoteCmd, c),
+    onRemoteCmd: (cb) => on<RemoteCommand>(IPC.remoteCmdIn, cb),
     onVolPopInput: (cb) => on<number>(IPC.volPopInput, cb),
     autoSub: (id, o) => ipcRenderer.invoke(IPC.autoSub, id, o),
     engineStatus: () => ipcRenderer.invoke(IPC.engineStatus),

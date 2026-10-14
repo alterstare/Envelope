@@ -6,6 +6,8 @@ import type { JSX } from 'react'
 import { useStore } from '../store'
 import type { Bookmark } from '../../../shared/types'
 import { media, seek } from '../player'
+import { remote } from '../embed'
+import { remoteRefresh } from '../remote'
 import { cueAt, linesFor } from '../subs'
 import { clock } from '../format'
 import { BookmarkAddIcon, BookmarkIcon } from './icons'
@@ -44,12 +46,14 @@ export async function toggleBookmarkHere(): Promise<void> {
   if (on) {
     await window.api.deleteBookmark(on.id)
     await st.refreshWork(n.work.id)
+    if (remote) remoteRefresh()
     st.showToast({ ok: true, message: `${clock(on.position)} 북마크를 삭제했습니다.` })
     return
   }
   const name = lineNow() || `북마크 ${n.work.bookmarks.length + 1}`
   await window.api.addBookmark(n.work.id, n.groupKey, t, name)
   await st.refreshWork(n.work.id)
+  if (remote) remoteRefresh()
   st.showToast({ ok: true, message: `${clock(t)} 북마크를 추가했습니다.` })
 }
 

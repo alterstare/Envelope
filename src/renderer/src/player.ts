@@ -6,6 +6,7 @@
 import { useStore } from './store'
 import { loadSubs } from './subs'
 import type { TrackGroup, TrackVersion, WorkDetail } from '../../shared/types'
+import { remote } from './embed'
 
 const SAVE_EVERY_MS = 5000
 const RESUME_MIN = 3 // s: earlier positions start from the top
@@ -23,11 +24,32 @@ let fadeBase: number | null = null
 const st = useStore.getState
 const set = useStore.setState
 
-export const media = (): HTMLMediaElement => el
+// The big window (inside Halftone) has no player of its own: actions go to
+// the panel frame's player, and "the media element" reads its mirrored state.
+const fwd = (fn: string, ...args: unknown[]): void => window.api.remoteCmd({ fn, args })
+const remoteMedia = {
+  get currentTime() {
+    return st().time
+  },
+  get paused() {
+    return !st().playing
+  },
+  get volume() {
+    return st().settings?.volume ?? 1
+  },
+  get duration() {
+    return st().duration
+  },
+  play: () => (fwd('resume'), Promise.resolve()),
+  pause: () => fwd('pause')
+} as unknown as HTMLMediaElement
+
+export const media = (): HTMLMediaElement => (remote ? remoteMedia : el)
 
 // The player screen hands over its <video> (null when it unmounts: a video
 // track then stops).
 export function attachVideo(v: HTMLVideoElement | null): void {
+  if (remote) return
   if (video && el === video && !v) {
     save()
     video.pause()
@@ -48,6 +70,7 @@ function versionOf(g: TrackGroup, id?: number): TrackVersion {
 // Start a track of a work (its chosen version unless `versionId`), resuming
 // where it was left; `at` overrides the start point.
 export async function play(work: WorkDetail, groupKey: string, opts: { versionId?: number; at?: number; autoplay?: boolean } = {}): Promise<void> {
+  if (remote) return fwd('play', work, groupKey, opts)
   const g = groupOf(work, groupKey)
   if (!g) return
   const v = versionOf(g, opts.versionId)
@@ -85,12 +108,14 @@ export function resumeTarget(w: WorkDetail): TrackGroup | undefined {
 
 // Play a work from the library (card / shelf play button).
 export async function playWork(id: number): Promise<void> {
+  if (remote) return fwd('playWork', id)
   const w = await window.api.work(id)
   const g = w && resumeTarget(w)
   if (w && g) await play(w, g.key)
 }
 
 export function toggle(): void {
+  if (remote) return fwd('toggle')
   if (!st().now) {
     const w = st().shown
     const g = w && resumeTarget(w)
@@ -103,6 +128,7 @@ export function toggle(): void {
 
 // End playback altogether: nothing loaded, the bottom bar disappears.
 export function stop(): void {
+  if (remote) return fwd('stop')
   if (!st().now) return
   save()
   el.pause()
@@ -125,12 +151,13 @@ useStore.subscribe((s, prev) => {
 })
 
 export function seek(t: number): void {
+  if (remote) return fwd('seek', t)
   if (!st().now) return
   el.currentTime = Math.max(0, Math.min(t, isFinite(el.duration) ? el.duration : t))
   set({ time: el.currentTime })
 }
 
-export const skip = (d: number): void => seek(el.currentTime + d)
+export const skip = (d: number): void => seek(media().currentTime + d)
 
 // Main tracks in order — or, while an extra/sample plays, just that one.
 function queue(): string[] {
@@ -142,6 +169,7 @@ function queue(): string[] {
 }
 
 export function next(auto = false): void {
+  if (remote) return fwd('next')
   const n = st().now
   const s = st().settings
   if (!n) return
@@ -158,6 +186,7 @@ export function next(auto = false): void {
 }
 
 export function prev(): void {
+  if (remote) return fwd('prev')
   const n = st().now
   if (!n) return
   if (el.currentTime > RESTART_AFTER) return seek(0)
@@ -172,20 +201,23 @@ export function prev(): void {
 // steps pull the knob back — it moved in jerks).
 let volumeSave: ReturnType<typeof setTimeout> | null = null
 export function setVolume(v: number): void {
-  el.volume = v
-  fadeBase = null
   const cur = st().settings
   if (cur) set({ settings: { ...cur, volume: v } })
+  if (remote) return fwd('setVolume', v)
+  el.volume = v
+  fadeBase = null
   if (volumeSave) clearTimeout(volumeSave)
   volumeSave = setTimeout(() => void window.api.saveSettings({ volume: v }), 300)
 }
 
 export function setRate(r: number): void {
+  if (remote) return (void st().saveSettings({ rate: r }), fwd('setRate', r))
   el.playbackRate = r
   void st().saveSettings({ rate: r })
 }
 
 export function setSleep(mode: 'off' | 'time' | 'track' | 'work', minutes?: number): void {
+  if (remote) return fwd('setSleep', mode, minutes)
   const m = minutes ?? st().sleep.minutes
   if (fadeBase !== null) el.volume = fadeBase
   fadeBase = null

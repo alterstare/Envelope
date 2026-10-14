@@ -1,3 +1,4 @@
+import type { HostMode } from './embed'
 import { create } from 'zustand'
 import type { JobSummary, WindowState } from '../../shared/ipc'
 import type { Group, ProgressEvent, Settings, SubtitleText, WorkDetail, WorkLang, WorkSummary } from '../../shared/types'
@@ -42,7 +43,7 @@ export const ALL_FILTER: LibFilter = {
   ungrouped: true
 }
 
-interface State {
+export interface State {
   view: View
   settings: Settings | null
   works: WorkSummary[]
@@ -63,6 +64,7 @@ interface State {
   job: ProgressEvent | null // other background work (file tools)
   jobs: ProgressEvent[] // every job of this session, newest first (파일 정리 › 작업)
   win: WindowState // standalone window: maximized / 최소화 모드 / 항상 위
+  hostMode: HostMode // inside Halftone: right panel / bottom bar / hidden (big window open)
   toolsScope: number[] | null // works the file tools look at; null = all
   toolsTab: ToolTab
   toast: JobSummary | null
@@ -118,6 +120,7 @@ export const useStore = create<State>((set, get) => ({
   job: null,
   jobs: [],
   win: { maximized: false, mini: false, onTop: true },
+  hostMode: 'panel',
 
   toolsScope: null,
   toolsTab: 'cover',
@@ -141,6 +144,8 @@ export const useStore = create<State>((set, get) => ({
     const cur = get().settings
     if (cur) set({ settings: { ...cur, ...p } }) // instant; the saved copy follows
     set({ settings: await window.api.saveSettings(p) })
+    // the big window inside Halftone: the panel's player reads them again
+    if (new URLSearchParams(location.search).has('remote')) window.api.remoteCmd({ fn: 'settings', args: [] })
   },
   loadWorks: async () => set({ works: await window.api.works() }),
   loadGroups: async () => set({ groups: await window.api.groups() }),

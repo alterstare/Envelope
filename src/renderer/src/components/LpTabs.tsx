@@ -7,7 +7,7 @@ import type { JSX } from 'react'
 import { useStore } from '../store'
 import { play, resumeTarget } from '../player'
 import { AlbumIcon, CloseFullscreenIcon, CloseSmallIcon, OpenInFullIcon, PictureInPictureAltIcon } from './icons'
-import { embedded } from '../embed'
+import { hosted, remote, requestHost } from '../embed'
 import { useNarrow } from './ui'
 import { enterMini } from '../miniMode'
 
@@ -72,10 +72,28 @@ function Lp({ id, n }: { id: number; n: number }): JSX.Element | null {
   )
 }
 
-// 작은 창 ⇄ 큰 창 (standalone only — inside Halftone the panel sets the width)
+// 최소화 모드 and 작은 창 ⇄ 큰 창. Inside Halftone: the bar at Halftone's
+// bottom, and the separate big window (from the panel) / back to the panel
+// (from the big window).
 function SizeToggle(): JSX.Element | null {
   const narrow = useNarrow()
-  if (embedded) return null
+  if (hosted)
+    return (
+      <div className="lp-foot">
+        <button className="mini icon" title="최소화 모드 (Halftone 아래 재생 바)" onClick={() => requestHost({ what: 'bar' })}>
+          <PictureInPictureAltIcon />
+        </button>
+        {remote ? (
+          <button className="mini icon" title="패널로 보기" onClick={() => requestHost({ what: 'panel' })}>
+            <CloseFullscreenIcon />
+          </button>
+        ) : (
+          <button className="mini icon" title="큰 창으로 보기 (별도 창)" onClick={() => requestHost({ what: 'window' })}>
+            <OpenInFullIcon />
+          </button>
+        )}
+      </div>
+    )
   return (
     <div className="lp-foot">
       <button className="mini icon" title="최소화 모드 (재생 바만 남기기)" onClick={() => void enterMini()}>

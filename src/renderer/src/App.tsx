@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import type { EnvStatus } from '../../shared/ipc'
 import type { ProgressEvent } from '../../shared/types'
-import { embedded, followHostTheme, postJob } from './embed'
+import { embedded, followHostTheme, hosted, onHostMessage, postJob, remote } from './embed'
+import { followRemote, serveRemote } from './remote'
 import { useStore } from './store'
 import type { View } from './store'
 import { media, next, prev, setRate, setVolume, skip, toggle } from './player'
@@ -103,6 +104,7 @@ function Main(): JSX.Element {
   const toast = useStore((s) => s.toast)
   const shownId = useStore((s) => s.shown?.id)
   const mini = useStore((s) => s.win.mini)
+  const hostMode = useStore((s) => s.hostMode)
   // narrow: 지금 재생 is a sheet — it slides up in (CSS) and, when another
   // screen takes over, a copy slides down out over it
   const narrow = useNarrow()
@@ -130,7 +132,21 @@ function Main(): JSX.Element {
         void useStore.getState().refreshWork()
       }),
       window.api.onToast((t) => useStore.getState().showToast(t)),
-      ...(embedded ? [] : [window.api.onWindowState((w) => useStore.setState({ win: w }))]),
+      ...(hosted ? [] : [window.api.onWindowState((w) => useStore.setState({ win: w }))]),
+      // inside Halftone: its shape for this frame (panel / bar / hidden) and
+      // the keys it doesn't use itself; the big window shows the frame's player
+      ...(embedded
+        ? [
+            onHostMessage((m) => {
+              if (m.type === 'env-mode') {
+                useStore.setState({ hostMode: m.mode })
+                document.documentElement.classList.toggle('env-bar', m.mode === 'bar')
+              } else window.dispatchEvent(new KeyboardEvent('keydown', m.init))
+            }),
+            serveRemote()
+          ]
+        : []),
+      ...(remote ? [followRemote()] : []),
       serveDecoding()
     ]
     return () => offs.forEach((f) => f())
@@ -139,6 +155,12 @@ function Main(): JSX.Element {
   // Theme: the host's when embedded, otherwise our own setting.
   useEffect(() => {
     if (embedded) return followHostTheme((t) => (document.documentElement.dataset.theme = t))
+    // the big window inside Halftone: Halftone's theme (passed when it opened it)
+    const hostTheme = remote && new URLSearchParams(location.search).get('theme')
+    if (hostTheme) {
+      document.documentElement.dataset.theme = hostTheme
+      return undefined
+    }
     if (settings) document.documentElement.dataset.theme = settings.theme
     return undefined
   }, [settings?.theme]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -267,9 +289,13 @@ function Main(): JSX.Element {
 
   const navView = view === 'work' ? 'library' : view
   if (mini) return <MiniMode />
+  // inside Halftone: the bar at its bottom, or nothing while the big window
+  // shows this frame's player (it keeps playing here)
+  if (embedded && hostMode === 'bar') return <MiniMode />
+  if (embedded && hostMode === 'hidden') return <div className="env-hidden" />
   return (
-    <div className={`app view-${view} ${now ? 'has-now' : ''} ${embedded ? '' : 'framed'}`}>
-      {!embedded && <TitleStrip />}
+    <div className={`app view-${view} ${now ? 'has-now' : ''} ${hosted ? '' : 'framed'}`}>
+      {!hosted && <TitleStrip />}
       <nav className="topbar">
         <div className="topbar-left">
           <span className="brand">

@@ -14,6 +14,8 @@ import { useEffect, useRef } from 'react'
 import { VolumeOffIcon, VolumeUpIcon } from './icons'
 import { Cover } from './ui'
 import { leaveMini } from '../miniMode'
+import { hosted, requestHost } from '../embed'
+import { Volume } from './NowBar'
 import {
   AlbumIcon,
   CloseIcon,
@@ -104,6 +106,26 @@ function MiniVolume(): JSX.Element {
   )
 }
 
+// Inside Halftone the bar is a frame only as tall as the bar: while the
+// pointer is on 음량, Halftone lifts the frame (its top see-through) so the
+// pop-up bar fits above.
+const LIFT_PX = 150
+function LiftedVolume(): JSX.Element {
+  const drop = useRef<ReturnType<typeof setTimeout> | null>(null)
+  return (
+    <div
+      className="mm-lift"
+      onMouseEnter={() => {
+        if (drop.current) clearTimeout(drop.current)
+        requestHost({ what: 'lift', px: LIFT_PX })
+      }}
+      onMouseLeave={() => (drop.current = setTimeout(() => requestHost({ what: 'lift', px: 0 }), 220))}
+    >
+      <Volume />
+    </div>
+  )
+}
+
 export default function MiniMode(): JSX.Element {
   const now = useStore((s) => s.now)
   const playing = useStore((s) => s.playing)
@@ -149,18 +171,30 @@ export default function MiniMode(): JSX.Element {
             <SkipNextIcon />
           </button>
         </div>
-        <div className="flat-group mm-tools">
-          <MiniVolume />
-          <button className={`mini icon tb ${onTop ? 'on' : ''}`} title={onTop ? '항상 위에 두기 끄기' : '항상 위에 두기'} onClick={() => void window.api.setOnTop(!onTop)}>
-            <KeepIcon />
-          </button>
-          <button className="mini icon tb" title="원래 크기로" onClick={() => void leaveMini()}>
-            <OpenInFullIcon />
-          </button>
-          <button className="mini icon tb" title="닫기" onClick={() => window.api.winControl('close')}>
-            <CloseIcon />
-          </button>
-        </div>
+        {hosted ? (
+          <div className="flat-group mm-tools">
+            <LiftedVolume />
+            <button className="mini icon tb" title="패널로 보기" onClick={() => requestHost({ what: 'panel' })}>
+              <OpenInFullIcon />
+            </button>
+            <button className="mini icon tb" title="음성 플레이어 닫기" onClick={() => requestHost({ what: 'close' })}>
+              <CloseIcon />
+            </button>
+          </div>
+        ) : (
+          <div className="flat-group mm-tools">
+            <MiniVolume />
+            <button className={`mini icon tb ${onTop ? 'on' : ''}`} title={onTop ? '항상 위에 두기 끄기' : '항상 위에 두기'} onClick={() => void window.api.setOnTop(!onTop)}>
+              <KeepIcon />
+            </button>
+            <button className="mini icon tb" title="원래 크기로" onClick={() => void leaveMini()}>
+              <OpenInFullIcon />
+            </button>
+            <button className="mini icon tb" title="닫기" onClick={() => window.api.winControl('close')}>
+              <CloseIcon />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
