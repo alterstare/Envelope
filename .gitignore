@@ -1,0 +1,15 @@
+node_modules/
+out/
+dist/
+*.log
+.DS_Store
+models/
+engines/
+data/
+build/*.blockmap
+.scratch/
+.build/
+# local only: design notes with real-library examples
+CLAUDE.md
+docs/sample-library.md
+dist-release/
