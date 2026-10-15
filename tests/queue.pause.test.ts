@@ -53,9 +53,10 @@ describe('JobQueue 모두 중지 / 재개 / 모두 취소', () => {
     const a = q.add('a', ticker(10, log, 'a'))
     const b = q.add('b', ticker(1, log, 'b'))
     await wait(5)
+    // listen before cancelling: a waiting job is rejected at once
+    const ends = [a.done, b.done].map((p) => p.then(() => null, (e) => e))
     expect(q.cancelAll()).toBe(2)
-    await expect(a.done).rejects.toBeInstanceOf(CancelledError)
-    await expect(b.done).rejects.toBeInstanceOf(CancelledError)
+    for (const e of await Promise.all(ends)) expect(e).toBeInstanceOf(CancelledError)
     expect(q.size).toBe(0)
   })
 
