@@ -1,4 +1,4 @@
-import { readFileSync } from 'fs'
+import { existsSync } from 'fs'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { EnvCore } from '../src/core'
@@ -10,6 +10,17 @@ import { alignByLength, alignJapanese, normJa, toAlignedCues } from '../src/core
 import { parseSubtitle, toVtt } from '../src/core/subtitle'
 import type { Translator } from '../src/core/translate'
 import { cleanup, tempDir, tree } from './helpers'
+
+// The subtitle the program keeps for the track whose path contains `part`.
+async function appSub(core: EnvCore, id: number, part: string, lang: string): Promise<string> {
+  for (const g of core.work(id)!.groups)
+    for (const v of g.versions)
+      if (v.path.includes(part)) {
+        const s = v.subs.find((x) => x.lang === lang && x.path.startsWith('envsub:'))
+        if (s) return (await core.readSubtitle(s.path)).cues.map((c) => c.text).join('\n')
+      }
+  return ''
+}
 
 afterEach(cleanup)
 
@@ -114,9 +125,10 @@ describe('대본 기반 자막', () => {
     const r = await core.scriptSub(id, { sourceId: ja.id, translate: true, redo: false }).done
     expect(r.failed).toEqual([])
     expect(r.made).toBe(4)
-    const vtt = readFileSync(join(w, '01_はじまり.ja.vtt'), 'utf8')
+    const vtt = await appSub(core, id, '01_', 'ja')
     expect(vtt).toContain('お兄ちゃん、おかえりなさい')
-    expect(readFileSync(join(w, '02_おやすみ.ko.vtt'), 'utf8')).toContain('KO:おやすみなさい')
+    expect(await appSub(core, id, '02_', 'ko')).toContain('KO:おやすみなさい')
+    expect(existsSync(join(w, '01_はじまり.ja.vtt'))).toBe(false) // the folder is untouched
     core.close()
   })
 })

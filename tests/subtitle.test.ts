@@ -87,7 +87,7 @@ describe('subtitles in the library', () => {
     expect(s.tracks.find((t) => t.title === '02')!.subs).toEqual([])
   })
 
-  it('saves next to the audio, keeps other programs’ files unless told, and undoes', async () => {
+  it('keeps saved subtitles in the program (the folder is untouched), undoes, and exports them in 파일 정리', async () => {
     const root = tempDir()
     const w = join(root, 'RJ01000011 作品')
     tree(w, { '01.mp3': mp3(1) })
@@ -99,23 +99,35 @@ describe('subtitles in the library', () => {
     const cues = [{ start: 0, end: 1, text: '안녕' }]
 
     const r = await core.saveSubtitle(track.chosen, 'ko', cues)
-    expect(r).toEqual({ path: join(w, '01.ko.vtt'), conflict: false })
+    expect(r.conflict).toBe(false)
+    expect(r.path.startsWith('envsub:ko:')).toBe(true)
+    expect(existsSync(join(w, '01.ko.vtt'))).toBe(false) // nothing written next to the audio
     expect((await core.readSubtitle(r.path)).cues).toEqual(cues)
     expect(core.work(id)!.groups[0].versions[0].subs[0]).toEqual({ path: r.path, lang: 'ko' })
 
-    // updating our own file needs no question; undo puts the first version back
+    // update, then undo twice: back to the first text, then none
     await core.saveSubtitle(track.chosen, 'ko', [{ start: 0, end: 1, text: '수정' }])
     await core.log.undo()
     expect((await core.readSubtitle(r.path)).cues[0].text).toBe('안녕')
     await core.log.undo()
-    expect(existsSync(r.path)).toBe(false)
     expect(core.work(id)!.groups[0].versions[0].subs).toEqual([])
 
-    // someone else's 01.ko.vtt
+    // a program subtitle wins over another program's file of the same language
     writeFileSync(join(w, '01.ko.vtt'), 'WEBVTT\n\n00:00.000 --> 00:01.000\n원본\n')
-    expect((await core.saveSubtitle(track.chosen, 'ko', cues)).conflict).toBe(true)
+    await core.runScan().done
+    await core.saveSubtitle(track.chosen, 'ko', cues)
+    expect(core.work(id)!.groups[0].versions[0].subs[0].path).toBe(r.path)
     expect(readFileSync(join(w, '01.ko.vtt'), 'utf8')).toContain('원본')
-    expect((await core.saveSubtitle(track.chosen, 'ko', cues, true)).conflict).toBe(false)
+
+    // 파일 정리 › 자막 › 폴더 변경: the other program's file is a conflict;
+    // exporting it anyway writes ours, undo puts theirs back
+    const plan = await core.planSubExport([id]).done
+    expect(plan.map((p) => p.state)).toEqual(['conflict'])
+    const done = await core.runSubExport(plan).done
+    expect(done.done).toBe(1)
+    expect(readFileSync(join(w, '01.ko.vtt'), 'utf8')).toContain('안녕')
+    await core.log.undo()
+    expect(readFileSync(join(w, '01.ko.vtt'), 'utf8')).toContain('원본')
 
     core.setSubOffset(id, track.key, -0.4)
     expect(core.work(id)!.groups[0].subOffset).toBe(-0.4)

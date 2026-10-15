@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'fs'
+import { existsSync } from 'fs'
 import { basename, join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { EnvCore } from '../src/core'
@@ -9,6 +9,17 @@ import { MockAsr } from '../src/core/asr/engines'
 import { parseIdAnswer, translateLines } from '../src/core/translate'
 import type { Translator } from '../src/core/translate'
 import { cleanup, tempDir, tree } from './helpers'
+
+// The subtitle the program keeps for the track whose path contains `part`.
+async function appSub(core: EnvCore, id: number, part: string, lang: string): Promise<string> {
+  for (const g of core.work(id)!.groups)
+    for (const v of g.versions)
+      if (v.path.includes(part)) {
+        const s = v.subs.find((x) => x.lang === lang && x.path.startsWith('envsub:'))
+        if (s) return (await core.readSubtitle(s.path)).cues.map((c) => c.text).join('\n')
+      }
+  return ''
+}
 
 afterEach(cleanup)
 
@@ -100,7 +111,7 @@ describe('translation', () => {
 })
 
 describe('자동 자막', () => {
-  it('writes .ja.vtt and .ko.vtt next to the voice-only file, caches the engine and keeps existing subtitles', async () => {
+  it('keeps .ja / .ko subtitles in the program for the voice-only file (nothing written to the folder), caches the engine and keeps existing subtitles', async () => {
     const root = tempDir()
     const w = join(root, 'RJ01000050 作品')
     const pcm = speechPcm(20, [
@@ -121,10 +132,9 @@ describe('자동 자막', () => {
     const r = await core.autoSub(id, { transcribe: true, translate: true, extras: false, redo: false }).done
     expect(r.failed).toEqual([])
     expect(r.made).toBe(2)
-    const ja = join(w, 'SE無', '01_はじまり.ja.vtt')
-    const ko = join(w, 'SE無', '01_はじまり.ko.vtt')
-    expect(readFileSync(ja, 'utf8')).toContain('おかえりなさい')
-    expect(readFileSync(ko, 'utf8')).toContain('어서 와')
+    expect(await appSub(core, id, join('SE無', '01_'), 'ja')).toContain('おかえりなさい')
+    expect(await appSub(core, id, join('SE無', '01_'), 'ko')).toContain('어서 와')
+    expect(existsSync(join(w, 'SE無', '01_はじまり.ja.vtt'))).toBe(false)
     expect(existsSync(join(w, 'SE有', '01_はじまり.ja.vtt'))).toBe(false)
     const calls = asr.calls
 
@@ -135,7 +145,7 @@ describe('자동 자막', () => {
     expect(again.skipped.length).toBe(2)
     expect(asr.calls).toBe(calls)
 
-    // redo: Env's own files are replaced, the engine answer comes from the cache
+    // redo: the program's subtitles are replaced, the engine answer comes from the cache
     const redo = await core.autoSub(id, { transcribe: true, translate: false, extras: false, redo: true }).done
     expect(redo.made).toBe(1)
     expect(asr.calls).toBe(calls)
