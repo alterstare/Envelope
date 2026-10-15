@@ -13,6 +13,7 @@ const FAKE: Record<string, unknown> = {
       maker_name: 'サークル',
       creaters: { voice_by: [{ name: '声優A' }, { name: '声優B' }] },
       image_main: { url: '//img.dlsite.jp/x/RJ01000030_img_main.jpg' },
+      options: 'JPN#SND',
       genres: [
         { name: '최면', name_base: '催眠' },
         { name: '연속 절정', name_base: '連続絶頂' }
@@ -33,6 +34,7 @@ describe('DLsite', () => {
       circle: 'サークル',
       voices: ['声優A', '声優B'],
       image: 'https://img.dlsite.jp/x/RJ01000030_img_main.jpg',
+      lang: 'ja',
       tags: [
         { ko: '최면', ja: '催眠' },
         { ko: '연속 절정', ja: '連続絶頂' }
@@ -68,6 +70,35 @@ describe('DLsite', () => {
     core.db.prepare('UPDATE works SET dl_tags = NULL WHERE id = ?').run(a.id)
     expect(await core.runDlsite(null).done).toMatchObject({ found: 1 })
     expect(core.works().find((x) => x.id === a.id)!.tags.length).toBe(2)
+    core.close()
+  })
+})
+
+describe('release language', () => {
+  it('a Korean folder name is not a Korean release; DLsite and 【한국어 자막판】 say what it is', async () => {
+    const LANGS: Record<string, unknown> = {
+      RJ01000040: [{ work_name: '日本語の作品', options: 'JPN#SND' }],
+      RJ01000041: [{ work_name: '번역판', options: 'SND#KO_KR', translation_info: { lang: 'KO_KR' } }],
+      RJ01000042: [{ work_name: '한국 작품', options: 'SND#KO_KR', translation_info: { lang: null } }]
+    }
+    const getL = async (url: string): Promise<unknown> => LANGS[new URL(url).searchParams.get('workno')!] ?? []
+    const root = tempDir()
+    tree(root, {
+      'RJ01000040 한국어로 바꾼 폴더 이름/01.mp3': mp3(1),
+      'RJ01000041 번역판/01.mp3': mp3(1),
+      'RJ01000042 한국 작품/01.mp3': mp3(1),
+      '【한국어 자막판】 표시만 있는 작품/01.mp3': mp3(1)
+    })
+    const core = new EnvCore(tempDir(), { dlsiteGet: getL, dlsiteBytes: bytes })
+    core.saveSettings({ libraryDirs: [root] })
+    await core.runScan().done
+    const lang = (code: string | null): string => core.works().find((w) => w.code === code)!.lang
+    expect(lang('RJ01000040')).toBe('ja') // Korean name, but nothing says it's a Korean release
+    expect(lang(null)).toBe('ko-sub') // the marker
+    await core.runDlsite(null).done
+    expect(lang('RJ01000040')).toBe('ja')
+    expect(lang('RJ01000041')).toBe('ko-sub') // DLsite: a Korean translation
+    expect(lang('RJ01000042')).toBe('ko-voice') // DLsite: a Korean original
     core.close()
   })
 })
