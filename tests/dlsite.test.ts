@@ -12,12 +12,17 @@ const FAKE: Record<string, unknown> = {
       work_name: '作品のタイトル',
       maker_name: 'サークル',
       creaters: { voice_by: [{ name: '声優A' }, { name: '声優B' }] },
-      image_main: { url: '//img.dlsite.jp/x/RJ01000030_img_main.jpg' }
+      image_main: { url: '//img.dlsite.jp/x/RJ01000030_img_main.jpg' },
+      genres: [
+        { name: '최면', name_base: '催眠' },
+        { name: '연속 절정', name_base: '連続絶頂' }
+      ]
     }
   ],
   RJ01000031: []
 }
-const get = async (url: string): Promise<unknown> => FAKE[new URL(url).searchParams.get('workno')!] ?? []
+const asked: string[] = []
+const get = async (url: string): Promise<unknown> => (asked.push(url), FAKE[new URL(url).searchParams.get('workno')!] ?? [])
 const bytes = async (): Promise<Buffer> => Buffer.from('jpeg')
 
 describe('DLsite', () => {
@@ -27,8 +32,13 @@ describe('DLsite', () => {
       title: '作品のタイトル',
       circle: 'サークル',
       voices: ['声優A', '声優B'],
-      image: 'https://img.dlsite.jp/x/RJ01000030_img_main.jpg'
+      image: 'https://img.dlsite.jp/x/RJ01000030_img_main.jpg',
+      tags: [
+        { ko: '최면', ja: '催眠' },
+        { ko: '연속 절정', ja: '連続絶頂' }
+      ]
     })
+    expect(new URL(asked[0]).searchParams.get('locale')).toBe('ko_KR') // Korean tag names
     expect(await fetchDlsite('RJ01000031', get)).toBeNull()
     expect(await fetchDlsite('not-a-code', get)).toBeNull()
   })
@@ -45,6 +55,8 @@ describe('DLsite', () => {
     expect(await core.runDlsite(null).done).toEqual({ found: 1, missing: 1, failed: 0 })
     const w = core.works().find((x) => x.id === a.id)!
     expect(w).toMatchObject({ title: '作品のタイトル', folderTitle: 'RJ01000030', circle: 'サークル', voices: ['声優A', '声優B'] })
+    expect(w.tags.map((t) => t.ko)).toEqual(['최면', '연속 절정'])
+    expect(core.work(a.id)!.tags.map((t) => t.ja)).toEqual(['催眠', '連続絶頂'])
     expect(w.cover?.startsWith(core.paths.coversDir)).toBe(true)
     expect(existsSync(w.cover!) && readFileSync(w.cover!, 'utf8')).toBe('jpeg')
     expect(core.work(a.id)!.images).toEqual([w.cover])
@@ -52,6 +64,10 @@ describe('DLsite', () => {
     expect(core.codeOnlyWorks()).toEqual([])
     await core.runScan().done // a rescan keeps what DLsite said
     expect(core.work(a.id)!.dlTitle).toBe('作品のタイトル')
+    // asked before tags were kept → asked again by "not asked yet"
+    core.db.prepare('UPDATE works SET dl_tags = NULL WHERE id = ?').run(a.id)
+    expect(await core.runDlsite(null).done).toMatchObject({ found: 1 })
+    expect(core.works().find((x) => x.id === a.id)!.tags.length).toBe(2)
     core.close()
   })
 })
