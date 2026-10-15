@@ -97,6 +97,28 @@ describe('wav 정리', () => {
   }, 30000)
 })
 
+describe('wav 정리 keeps the program subtitles', () => {
+  it('moves them from the wav to its mp3', async () => {
+    const root = tempDir()
+    const w = join(root, 'RJ01000022 作品')
+    tree(w, { '01.wav': wav(1) })
+    const core = new EnvCore(':memory:')
+    core.saveSettings({ libraryDirs: [root] })
+    await core.runScan().done
+    const id = core.works()[0].id
+    await core.saveSubtitle(core.work(id)!.groups[0].chosen, 'ja', [{ start: 0, end: 1, text: 'こんにちは' }])
+    const bin = tempDir()
+    const r = await core.runWav(await core.planWav(null).done, async (p) => renameSync(p, join(bin, basename(p)))).done
+    expect(r.done).toBe(1)
+    await core.runScan().done
+    const v = core.work(id)!.groups[0].versions[0]
+    expect(v.path.endsWith('01.mp3')).toBe(true)
+    expect(v.subs.map((s) => s.lang)).toEqual(['ja'])
+    expect((await core.readSubtitle(v.subs[0].path)).cues[0].text).toBe('こんにちは')
+    core.close()
+  }, 30000)
+})
+
 describe('mp3 썸네일', () => {
   it('puts the cover into mp3s, keeps the date, and undo restores the bytes', async () => {
     const root = tempDir()
