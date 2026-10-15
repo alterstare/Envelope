@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync } from 'fs'
+import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { EnvCore } from '../src/core'
 import { fetchDlsite } from '../src/core/dlsite'
@@ -35,6 +36,7 @@ describe('DLsite', () => {
       voices: ['声優A', '声優B'],
       image: 'https://img.dlsite.jp/x/RJ01000030_img_main.jpg',
       lang: 'ja',
+      age: null,
       tags: [
         { ko: '최면', ja: '催眠' },
         { ko: '연속 절정', ja: '連続絶頂' }
@@ -99,6 +101,39 @@ describe('release language', () => {
     expect(lang('RJ01000040')).toBe('ja')
     expect(lang('RJ01000041')).toBe('ko-sub') // DLsite: a Korean translation
     expect(lang('RJ01000042')).toBe('ko-voice') // DLsite: a Korean original
+    core.close()
+  })
+})
+
+describe('언어 분류 · 연령 분류', () => {
+  it('classifies by the scripts and subtitles the folder holds, marking the program-made ones', async () => {
+    const root = tempDir()
+    tree(root, {
+      'RJ01000050 音声だけ/01.mp3': mp3(1),
+      'RJ01000051 台本あり/01.mp3': mp3(1),
+      'RJ01000052 字幕あり/01.mp3': mp3(1)
+    })
+    writeFileSync(join(root, 'RJ01000051 台本あり', '台本.txt'), 'トラック1\nお兄ちゃん、おはよう。今日もいい天気だね。')
+    writeFileSync(join(root, 'RJ01000052 字幕あり', '01.ko.vtt'), 'WEBVTT\n\n00:00.000 --> 00:01.000\n오빠, 좋은 아침\n')
+    const AGE: Record<string, unknown> = { RJ01000050: [{ work_name: 'x', options: 'JPN', age_category: 3 }], RJ01000051: [{ work_name: 'y', options: 'JPN', age_category: 1 }] }
+    const core = new EnvCore(tempDir(), { dlsiteGet: async (u: string) => AGE[new URL(u).searchParams.get('workno')!] ?? [], dlsiteBytes: bytes })
+    core.saveSettings({ libraryDirs: [root] })
+    await core.runScan().done
+    const of = (code: string) => core.works().find((w) => w.code === code)!
+    expect(of('RJ01000050').content).toEqual({ scripts: [], subs: {} })
+    expect(of('RJ01000051').content).toEqual({ scripts: ['ja'], subs: {} })
+    expect(of('RJ01000052').content).toEqual({ scripts: [], subs: { ko: 'user' } })
+    // a subtitle the program made: 일본어 자막 [자체 생성]
+    const w = of('RJ01000050')
+    await core.saveSubtitle(core.work(w.id)!.groups[0].chosen, 'ja', [{ start: 0, end: 1, text: 'おはよう' }])
+    expect(of('RJ01000050').content.subs).toEqual({ ja: 'app' })
+    expect(core.work(w.id)!.content.subs).toEqual({ ja: 'app' })
+    // DLsite age: R18 / 일반 / unknown
+    expect(of('RJ01000050').age).toBeNull()
+    await core.runDlsite(null).done
+    expect(of('RJ01000050').age).toBe('r18')
+    expect(of('RJ01000051').age).toBe('general')
+    expect(of('RJ01000052').age).toBeNull()
     core.close()
   })
 })
