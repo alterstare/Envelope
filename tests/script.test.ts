@@ -133,6 +133,40 @@ describe('대본 기반 자막', () => {
   })
 })
 
+describe('직접 고른 대본 파일', () => {
+  it('uses a picked file the finder skips (any name, outside the work) like a found script', async () => {
+    const root = tempDir()
+    const w = join(root, 'RJ01000071 テスト')
+    tree(w, {
+      '01_はじめ.wav': wavFromPcm16(pcm(10, [[1, 6]])),
+      '02_おわり.wav': wavFromPcm16(pcm(10, [[2, 5]]))
+    })
+    const other = tempDir()
+    tree(other, { '本編.txt': Buffer.from('トラック1\nこんにちは\nトラック2\nまたね\n') })
+    const heard: Record<number, string> = { 0: 'こんにちは', 1: 'またね' }
+    let call = 0
+    const asr = new MockAsr((len) => [{ start: 0.2, end: Math.min(len, 3), text: heard[call++ % 2], words: [{ start: 0.2, end: Math.min(len, 3), text: heard[(call - 1) % 2] }] }])
+    const core = new EnvCore(':memory:', { asr })
+    core.saveSettings({ libraryDirs: [root] })
+    await core.runScan().done
+    const id = core.works()[0].id
+    expect(await core.findScripts(id)).toEqual([]) // not found by name
+    expect(await core.scriptFromFile(join(other, 'x.mp3'))).toBeNull()
+    const src = (await core.scriptFromFile(join(other, '本編.txt')))!
+    expect([src.kind, src.lang, src.label]).toEqual(['whole', 'ja', '本編.txt'])
+    const prev = await core.previewScript(id, src.id)
+    expect(prev.map((p) => [p.title, p.first])).toEqual([
+      ['01_はじめ', 'こんにちは'],
+      ['02_おわり', 'またね']
+    ])
+    const r = await core.scriptSub(id, { sourceId: src.id, translate: false, redo: false }).done
+    expect(r.failed).toEqual([])
+    expect(await appSub(core, id, '02_', 'ja')).toContain('またね')
+    await expect(core.previewScript(id, `file:${join(other, 'gone.txt')}`)).rejects.toThrow('대본을 찾지 못했습니다')
+    core.close()
+  })
+})
+
 describe('트랙 제목이 없는 대본', () => {
   it('splits a whole script by what each track says', async () => {
     const { alignAcross } = await import('../src/core/script/align')
