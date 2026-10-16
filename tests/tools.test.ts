@@ -178,3 +178,26 @@ describe('이름 복구', () => {
     expect(safeName('a:b?c.')).toBe('a：b？c')
   })
 })
+
+describe('a work\'s own cover choice', () => {
+  it('shows DLsite\'s cover and puts it into the mp3s when the work chose it', async () => {
+    const root = tempDir()
+    const w = join(root, 'RJ01000031 作品')
+    tree(w, { '01.mp3': mp3(1) })
+    await sharp({ create: { width: 300, height: 300, channels: 3, background: '#336699' } }).jpeg().toFile(join(w, 'cover.jpg'))
+    const dl = join(tempDir(), 'dl.jpg')
+    await sharp({ create: { width: 300, height: 300, channels: 3, background: '#993366' } }).jpeg().toFile(dl)
+    const core = new EnvCore(tempDir())
+    core.saveSettings({ libraryDirs: [root] })
+    await core.runScan().done
+    const id = core.works()[0].id
+    ;(core as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } }).db.prepare('UPDATE works SET dl_cover = ? WHERE id = ?').run(dl, id)
+    expect(core.works()[0].cover?.endsWith('cover.jpg')).toBe(true) // the setting: folder
+    core.setCoverPref([id], 'dlsite')
+    expect(core.works()[0]).toMatchObject({ cover: dl, covers: { pref: 'dlsite' } })
+    expect((await core.planCover(null).done)[0].image).toBe(dl)
+    core.setCoverPref([id], null)
+    expect(core.works()[0].cover?.endsWith('cover.jpg')).toBe(true)
+    core.close()
+  })
+})
