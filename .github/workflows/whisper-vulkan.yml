@@ -1,0 +1,108 @@
+name: whisper.cpp Vulkan
+
+# Builds whisper-cli with the Vulkan backend (official whisper.cpp releases have
+# no Windows/Linux Vulkan build) and puts the zips in a pre-release named after
+# the tag, e.g. whisper-vulkan-v1.9.5 (whisper.cpp v1.9.5). The app's 엔진 받기
+# downloads them from there. Pre-release + not latest, so auto-update ignores it.
+#
+#   git tag whisper-vulkan-v1.9.5 && git push origin whisper-vulkan-v1.9.5
+on:
+  push:
+    tags:
+      - 'whisper-vulkan-v*'
+
+permissions:
+  contents: write
+
+env:
+  VULKAN_VERSION: 1.4.363.0
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            asset: whisper-vulkan-win-x64.zip
+          - os: ubuntu-22.04 # older glibc → runs on more distros
+            asset: whisper-vulkan-linux-x64.tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: whisper.cpp version from the tag
+        shell: bash
+        run: echo "WHISPER_REF=${GITHUB_REF_NAME#whisper-vulkan-}" >> "$GITHUB_ENV"
+
+      - name: Checkout whisper.cpp
+        uses: actions/checkout@v4
+        with:
+          repository: ggml-org/whisper.cpp
+          ref: ${{ env.WHISPER_REF }}
+          path: whisper.cpp
+
+      - name: Vulkan SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          curl.exe -sSL -o "$env:RUNNER_TEMP\vk.exe" "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
+          & "$env:RUNNER_TEMP\vk.exe" --accept-licenses --default-answer --confirm-command install
+          Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\$env:VULKAN_VERSION"
+          Add-Content $env:GITHUB_PATH "C:\VulkanSDK\$env:VULKAN_VERSION\Bin"
+
+      - name: Vulkan SDK (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -sSL -o "$RUNNER_TEMP/vk.tar.xz" "https://sdk.lunarg.com/sdk/download/$VULKAN_VERSION/linux/vulkansdk-linux-x86_64-$VULKAN_VERSION.tar.xz"
+          sudo apt-get update -qq && sudo apt-get install -y libvulkan-dev # the loader to link against (the SDK tarball has none)
+          mkdir -p "$RUNNER_TEMP/vk" && tar -xJf "$RUNNER_TEMP/vk.tar.xz" -C "$RUNNER_TEMP/vk"
+          sdk="$RUNNER_TEMP/vk/$VULKAN_VERSION/x86_64"
+          echo "VULKAN_SDK=$sdk" >> "$GITHUB_ENV"
+          echo "$sdk/bin" >> "$GITHUB_PATH"
+          echo "LD_LIBRARY_PATH=$sdk/lib" >> "$GITHUB_ENV"
+
+      # NATIVE off: no -march=native of the CI machine (AVX2 baseline instead).
+      # OpenMP off + static CRT: no vcomp140 / VC++ redistributable needed.
+      - name: Build
+        shell: bash
+        run: |
+          cmake -S whisper.cpp -B b -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF \
+            -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON -DWHISPER_SDL2=OFF \
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DCMAKE_POLICY_DEFAULT_CMP0091=NEW
+          cmake --build b --config Release --target whisper-cli -j 4
+
+      - name: Pack
+        shell: bash
+        run: |
+          mkdir out
+          bin=$(find b -type f \( -name whisper-cli.exe -o -name whisper-cli \) | head -1)
+          test -n "$bin"
+          cp "$bin" out/
+          cp whisper.cpp/LICENSE out/LICENSE-whisper.cpp.txt
+          if [ "$RUNNER_OS" = Windows ]; then
+            (cd out && 7z a "../${{ matrix.asset }}" .)
+          else
+            chmod +x out/whisper-cli
+            tar -czf "${{ matrix.asset }}" -C out .
+          fi
+          ./out/whisper-cli* --help > /dev/null 2>&1 || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: whisper.cpp Vulkan (${{ github.ref_name }})
+          body: Envelope 자동 자막에 쓰는 whisper.cpp Vulkan(GPU) 빌드입니다. 앱 설정의 엔진 받기가 자동으로 받습니다.
+          prerelease: true
+          make_latest: false
+          files: dist/*
