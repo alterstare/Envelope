@@ -115,6 +115,9 @@ describe('wav 정리 keeps the program subtitles', () => {
     expect(v.path.endsWith('01.mp3')).toBe(true)
     expect(v.subs.map((s) => s.lang)).toEqual(['ja'])
     expect((await core.readSubtitle(v.subs[0].path)).cues[0].text).toBe('こんにちは')
+    // undoing the save still works on the mp3 it moved to
+    await core.log.undo()
+    expect(core.work(id)!.groups[0].versions[0].subs).toEqual([])
     core.close()
   }, 30000)
 })
