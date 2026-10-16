@@ -1,7 +1,7 @@
 {
   "name": "envelope",
   "productName": "Envelope",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "동인 음성 작품을 자막과 함께 듣는 PC 플레이어",
   "main": "./out/main/index.js",
   "author": "alterstare",
