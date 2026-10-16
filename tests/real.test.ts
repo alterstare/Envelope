@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { pcm16FromWav, ASR_RATE } from '../src/core/asr/audio'
 import { GroqAsr, WhisperCppAsr, modelPath, whisperBinary } from '../src/core/asr/engines'
 import type { WhisperModel } from '../src/core/asr/engines'
-import { installCpuEngine, installModel } from '../src/core/asr/install'
+import { installBuild, installModel } from '../src/core/asr/install'
 import { cleanSegments, toCues } from '../src/core/asr/clean'
 import { chunkAudio, detectSpeech, planChunks, toTrackTime } from '../src/core/asr/vad'
 
@@ -17,7 +17,7 @@ const models = join(__dirname, '..', '.build', 'models')
 
 async function ensure(): Promise<void> {
   mkdirSync(models, { recursive: true })
-  if (!whisperBinary(engines, 'cpu')) await installCpuEngine(engines, fetch, () => {})
+  if (!whisperBinary(engines, 'cpu')) await installBuild(engines, 'cpu', fetch, () => {})
   for (const m of (process.env.ENV_REAL_MODELS ?? 'large-v3-turbo-q5_0').split(',') as WhisperModel[])
     if (!existsSync(modelPath(models, m))) await installModel(models, m, fetch, () => {})
 }
