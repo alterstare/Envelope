@@ -1,4 +1,5 @@
 import { join } from 'path'
+import { renameSync, rmSync } from 'fs'
 import { afterEach, describe, expect, it } from 'vitest'
 import { EnvCore } from '../src/core'
 import { findWorks, scanWork } from '../src/core/library/scan'
@@ -183,6 +184,26 @@ describe('library in the DB', () => {
     core.saveSettings({ libraryDirs: [] })
     expect((await core.runScan().done).removed).toBe(1)
     expect(core.works()).toHaveLength(0)
+    core.close()
+  })
+
+  it('keeps the works of a library folder that is not there (drive / NAS off)', async () => {
+    const root = tempDir()
+    const lib = join(root, 'lib')
+    tree(join(lib, 'RJ01000006 作品'), { '01_話.mp3': mp3(2) })
+    const core = new EnvCore(':memory:')
+    core.saveSettings({ libraryDirs: [lib] })
+    await core.runScan().done
+    expect(core.libraryDirWorks(lib)).toBe(1)
+    const off = join(root, 'unplugged')
+    renameSync(lib, off)
+    const r = await core.runScan().done
+    expect(r.offline).toEqual([lib])
+    expect(r.removed).toBe(0)
+    expect(core.works()).toHaveLength(1)
+    renameSync(off, lib)
+    rmSync(join(lib, 'RJ01000006 作品'), { recursive: true })
+    expect((await core.runScan().done).removed).toBe(1) // there but empty → gone
     core.close()
   })
 })
