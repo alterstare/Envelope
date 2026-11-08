@@ -6,7 +6,7 @@ import { ASR_RATE, pcm16FromWav, wavFromPcm16 } from '../src/core/asr/audio'
 import { chunkAudio, detectSpeech, planChunks, toTrackTime } from '../src/core/asr/vad'
 import { cleanSegments, toCues } from '../src/core/asr/clean'
 import { MockAsr } from '../src/core/asr/engines'
-import { parseIdAnswer, translateLines } from '../src/core/translate'
+import { TRANSLATE, TranslateStop, parseIdAnswer, translateLines } from '../src/core/translate'
 import type { Translator } from '../src/core/translate'
 import { cleanup, tempDir, tree } from './helpers'
 
@@ -152,6 +152,94 @@ describe('자동 자막', () => {
     core.close()
   })
 
+  it('translates the tracks together: short tracks share a request, a repeated line goes once', async () => {
+    const root = tempDir()
+    const w = join(root, 'RJ01000051 作品')
+    const pcm = speechPcm(6, [[1, 3]])
+    tree(w, { '01_a.wav': wavFromPcm16(pcm), '02_b.wav': wavFromPcm16(pcm), '03_c.wav': wavFromPcm16(pcm) })
+    const asr = new MockAsr(() => [{ start: 0.1, end: 2, text: 'お兄ちゃん、おかえりなさい' }])
+    const calls: string[][] = []
+    const tr: Translator = { id: 'fake', llm: true, translate: async (lines) => (calls.push(lines), lines.map(() => '오빠, 어서 와')) }
+    const core = new EnvCore(':memory:', { asr, translator: tr })
+    core.saveSettings({ libraryDirs: [root] })
+    await core.runScan().done
+    const id = core.works()[0].id
+    const r = await core.autoSub(id, { transcribe: true, translate: true, extras: false, redo: false }).done
+    expect(r.failed).toEqual([])
+    expect(r.made).toBe(6) // 3 × (ja + ko)
+    expect(calls).toEqual([['お兄ちゃん、おかえりなさい']]) // one request, the line once
+    for (const t of ['01_', '02_', '03_']) expect(await appSub(core, id, t, 'ko')).toBe('오빠, 어서 와')
+    core.close()
+  })
+
+  it('a full batch goes out while the next track is transcribed; the smaller rest goes at the end', async () => {
+    const root = tempDir()
+    const w = join(root, 'RJ01000053 作品')
+    const pcm = speechPcm(6, [[1, 3]])
+    tree(w, { '01_a.wav': wavFromPcm16(pcm), '02_b.wav': wavFromPcm16(pcm), '03_c.wav': wavFromPcm16(pcm) })
+    const asr = new MockAsr(() => [{ start: 0.1, end: 2, text: 'はい' }])
+    const sent: { lines: string[]; heard: number }[] = []
+    const tr: Translator = { id: 'fake', llm: true, translate: async (lines) => (sent.push({ lines, heard: asr.calls }), lines.map(() => '네')) }
+    const old = TRANSLATE.batch
+    TRANSLATE.batch = 2
+    try {
+      const core = new EnvCore(':memory:', { asr, translator: tr })
+      core.saveSettings({ libraryDirs: [root] })
+      await core.runScan().done
+      const id = core.works()[0].id
+      const r = await core.autoSub(id, { transcribe: true, translate: true, extras: false, redo: false }).done
+      expect(r.made).toBe(6)
+      expect(sent.map((s) => s.lines)).toEqual([['はい', 'はい'], ['はい']])
+      expect(sent[0].heard).toBeLessThan(asr.calls) // track 3 not transcribed yet
+      for (const t of ['01_', '02_', '03_']) expect(await appSub(core, id, t, 'ko')).toBe('네')
+      core.close()
+    } finally {
+      TRANSLATE.batch = old
+    }
+  })
+
+  it('a stop keeps the tracks already translated; running again sends only the rest', async () => {
+    const root = tempDir()
+    const w = join(root, 'RJ01000052 作品')
+    const pcm = speechPcm(6, [[1, 3]])
+    tree(w, { '01_a.wav': wavFromPcm16(pcm), '02_b.wav': wavFromPcm16(pcm), '03_c.wav': wavFromPcm16(pcm) })
+    const asr = new MockAsr(() => [{ start: 0.1, end: 2, text: 'はい' }]) // short: never deduped
+    let calls = 0
+    let stopAt = 3
+    const tr: Translator = {
+      id: 'fake',
+      llm: true,
+      translate: async (lines) => {
+        if (++calls === stopAt) throw new TranslateStop('오늘 사용 한도를 다 썼습니다')
+        return lines.map(() => '네')
+      }
+    }
+    const old = TRANSLATE.batch
+    TRANSLATE.batch = 1 // one request per track
+    try {
+      const core = new EnvCore(':memory:', { asr, translator: tr })
+      core.saveSettings({ libraryDirs: [root] })
+      await core.runScan().done
+      const id = core.works()[0].id
+      const err = await core.autoSub(id, { transcribe: true, translate: true, extras: false, redo: false }).done.catch((e) => e)
+      expect(err).toBeInstanceOf(TranslateStop)
+      expect(await appSub(core, id, '01_', 'ko')).toBe('네')
+      expect(await appSub(core, id, '02_', 'ko')).toBe('네')
+      expect(await appSub(core, id, '03_', 'ko')).toBe('')
+
+      calls = 0
+      stopAt = 0
+      await core.runScan().done
+      const r = await core.autoSub(id, { transcribe: true, translate: true, extras: false, redo: false }).done
+      expect(calls).toBe(1) // only track 3
+      expect(r.made).toBe(1)
+      expect(await appSub(core, id, '03_', 'ko')).toBe('네')
+      core.close()
+    } finally {
+      TRANSLATE.batch = old
+    }
+  })
+
   it('needs permission before sending audio or text out', () => {
     const core = new EnvCore(':memory:')
     core.saveSettings({ asrEngine: 'groq', groqApiKey: 'k', allowAudioUpload: false })
@@ -175,6 +263,25 @@ describe('자동 자막', () => {
 })
 
 describe('이름 번역', () => {
+  it('several works: names go out together, each name once (not a request per work)', async () => {
+    const root = tempDir()
+    tree(join(root, 'RJ01000061 甘い時間'), { '01_はじまり.mp3': null, '02_おやすみ.mp3': null })
+    tree(join(root, 'RJ01000062 夜の時間'), { '01_はじまり.mp3': null, '02_ねむり.mp3': null })
+    tree(join(root, 'RJ01000063 朝の時間'), { '01_はじまり.mp3': null })
+    const calls: string[][] = []
+    const tr: Translator = { id: 'fake', llm: true, translate: async (lines) => (calls.push(lines), lines.map((l) => 'KO ' + l)) }
+    const core = new EnvCore(':memory:', { translator: tr })
+    core.saveSettings({ libraryDirs: [root] })
+    await core.runScan().done
+    const ids = core.works().map((w) => w.id)
+    const r = await core.translateNamesOf(ids).done
+    expect(r.failed).toEqual([])
+    expect(r.names).toBe(8) // 3 titles + 5 tracks
+    expect(calls.length).toBe(1)
+    expect(calls[0].filter((l) => l === 'はじまり').length).toBe(1)
+    core.close()
+  })
+
   it('keeps codes and track numbers, shows translations when chosen, renames folders and files to them', async () => {
     const { splitName } = await import('../src/core/names/translate')
     expect(splitName('RJ01234567 01_はじまり')).toEqual({ prefix: 'RJ01234567 01_', body: 'はじまり' })

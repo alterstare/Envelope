@@ -2,7 +2,7 @@ import { existsSync } from 'fs'
 import { join } from 'path'
 import AdmZip from 'adm-zip'
 import { afterEach, describe, expect, it } from 'vitest'
-import { installEngines } from '../src/core/asr/install'
+import { engineStatus, installEngines } from '../src/core/asr/install'
 import { whisperBinary } from '../src/core/asr/engines'
 import { cleanup, tempDir } from './helpers'
 
@@ -51,6 +51,8 @@ describe.skipIf(!win)('엔진 받기', () => {
     expect(msg).toBe('whisper.cpp 엔진(Vulkan · CPU)을 받았습니다')
     expect(whisperBinary(dir, 'cpu')).toBe(join(dir, 'whisper-cpu', 'Release', 'whisper-cli.exe'))
     expect(whisperBinary(dir, 'vulkan')).toBe(join(dir, 'whisper-vulkan', 'whisper-cli.exe'))
+    // settings show what is installed and from which release
+    expect(engineStatus(dir, '')).toMatchObject({ vulkan: true, cpu: true, versions: { vulkan: 'whisper-vulkan-v1.9.5', cpu: 'b6000' } })
   })
 
   it('keeps the CPU build and says why when the Vulkan build is missing', async () => {

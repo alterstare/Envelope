@@ -6,7 +6,7 @@ import { ASR_RATE, wavFromPcm16 } from '../src/core/asr/audio'
 import { MockAsr } from '../src/core/asr/engines'
 import type { AsrSegment } from '../src/core/asr/clean'
 import { scriptLines } from '../src/core/script/text'
-import { alignByLength, alignJapanese, normJa, toAlignedCues } from '../src/core/script/align'
+import { CONTENT, alignByContent, alignByLength, alignJapanese, normJa, speechPieces, toAlignedCues } from '../src/core/script/align'
 import { parseSubtitle, toVtt } from '../src/core/subtitle'
 import type { Translator } from '../src/core/translate'
 import { cleanup, tempDir, tree } from './helpers'
@@ -80,6 +80,36 @@ describe('위치 맞추기', () => {
     expect(al[1].start).toBeCloseTo(3)
     expect(al[1].end).toBeCloseTo(7)
     expect(al[2].start).toBeCloseTo(8)
+  })
+
+  it('places Korean lines by what the translated speech shares with them', () => {
+    // the script has a line nobody says, the speech a piece the script lacks
+    const lines = ['오빠, 어서 와', '이 줄은 안 들림', '오늘은 하루 종일 같이 있자', '아앗♡', '잘 자, 오빠']
+    const pieces = [
+      { start: 1, end: 3, ko: '오빠, 어서 와요' },
+      { start: 4, end: 5, ko: '전혀 다른 말입니다' },
+      { start: 6, end: 9, ko: '오늘은 하루 종일 함께 있자' },
+      { start: 12, end: 14, ko: '잘 자요 오빠' }
+    ]
+    const al = alignByContent(lines, pieces, 20)
+    expect(al[0].start).toBeCloseTo(1 - CONTENT.leadS)
+    expect(al[2].start).toBeCloseTo(6 - CONTENT.leadS)
+    expect(al[4].start).toBeCloseTo(12 - CONTENT.leadS)
+    expect(al[2].conf).toBeGreaterThan(0.5)
+    // order kept for the rest
+    for (let i = 1; i < al.length; i++) expect(al[i].start).toBeGreaterThanOrEqual(al[i - 1].start)
+  })
+
+  it('cuts the heard speech into pieces at sentence marks and pauses, moans out', () => {
+    const w = (start: number, end: number, text: string): { start: number; end: number; text: string } => ({ start, end, text })
+    const segs: AsrSegment[] = [
+      { start: 0, end: 9, text: '', words: [w(0, 1, 'おかえり'), w(1, 2, 'なさい。'), w(2, 3, '今日は'), w(3.1, 4, 'ずっと'), w(6, 7, 'あぁぁん'), w(8, 9, '一緒だよ')] }
+    ]
+    expect(speechPieces(segs).map((p) => [p.start, p.text])).toEqual([
+      [0, 'おかえりなさい。'],
+      [2, '今日はずっと'],
+      [8, '一緒だよ']
+    ])
   })
 })
 
@@ -187,5 +217,51 @@ describe('트랙 제목이 없는 대본', () => {
     const lines = ['だいすきだいすき', 'まほうのつえをかして', 'あああああっ', 'だいすきだいすき', 'あしたのてんきはあめ', 'だいすきだいすき']
     const tracks = ['だいすきだいすきまほうのつえをかしてだいすき', 'だいすきだいすきあしたのてんきはあめだいすき']
     expect(partitionLines(lines, tracks)).toEqual([0, 0, 0, 0, 1, 1])
+  })
+})
+
+describe('한국어 대본', () => {
+  it('translates what is heard once for all tracks, places the lines, and asks nothing again', async () => {
+    const root = tempDir()
+    const w = join(root, 'RJ01000071 甘い時間')
+    tree(w, {
+      '01_はじまり.wav': wavFromPcm16(pcm(10, [[1, 6]])),
+      '02_おやすみ.wav': wavFromPcm16(pcm(10, [[2, 5]])),
+      'Script/01_はじまり.txt': Buffer.from('오빠, 어서 와\n오늘은 하루 종일 같이 있자'),
+      'Script/02_おやすみ.txt': Buffer.from('잘 자, 오빠')
+    })
+    const said: Record<string, [number, number, string][]> = {
+      a: [
+        [1, 2, 'お兄ちゃん、おかえり。'],
+        [3, 5, '今日は一日中一緒にいよう。']
+      ],
+      b: [[2, 4, 'おやすみ、お兄ちゃん。']]
+    }
+    let call = 0
+    const asr = new MockAsr(() => {
+      const ws = said[call++ % 2 === 0 ? 'a' : 'b'].map(([start, end, text]) => ({ start, end, text }))
+      return [{ start: ws[0].start, end: ws[ws.length - 1].end, text: ws.map((x) => x.text).join(''), words: ws }]
+    })
+    const ko: Record<string, string> = { 'お兄ちゃん、おかえり。': '오빠, 어서 와.', '今日は一日中一緒にいよう。': '오늘은 하루 종일 함께 있자.', 'おやすみ、お兄ちゃん。': '잘 자요, 오빠.' }
+    const asked: string[][] = []
+    const tr: Translator = { id: 'fake', llm: false, translate: async (ls) => (asked.push(ls), ls.map((l) => ko[l] ?? '')) }
+    const core = new EnvCore(':memory:', { asr, translator: tr })
+    core.saveSettings({ libraryDirs: [root], allowTextUpload: true })
+    await core.runScan().done
+    const id = core.works()[0].id
+    const src = (await core.findScripts(id)).find((s) => s.lang === 'ko')!
+
+    const r = await core.scriptSub(id, { sourceId: src.id, translate: false, redo: false }).done
+    expect(r.failed).toEqual([])
+    expect(r.made).toBe(2)
+    expect(asked).toEqual([Object.keys(ko)]) // both tracks in one request
+    const first = (await core.readSubtitle(core.work(id)!.groups[0].versions[0].subs.find((s) => s.lang === 'ko')!.path)).cues
+    expect(first.map((c) => c.text)).toEqual(['오빠, 어서 와', '오늘은 하루 종일 같이 있자'])
+    expect(first[1].start - first[0].start).toBeCloseTo(2) // each line on its own piece (heard at 1 s and 3 s)
+
+    // again: the translations are kept, nothing is asked
+    await core.scriptSub(id, { sourceId: src.id, translate: false, redo: true }).done
+    expect(asked.length).toBe(1)
+    core.close()
   })
 })
