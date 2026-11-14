@@ -325,7 +325,7 @@ export interface DupGroup {
   label: string // the code, or the title
   members: DupMember[] // the one suggested to keep first
 }
-// 중복 작품 › 따로 두기: a work folder and where it goes
+// 중복 작품 › 제거할 작품: a work folder and where it goes
 export interface SetAsideItem {
   workId: number
   from: string

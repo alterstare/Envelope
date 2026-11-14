@@ -93,7 +93,7 @@ function handleMedia(): void {
       'Content-Type': type,
       'Accept-Ranges': 'bytes',
       'Content-Length': String(size ? end - start + 1 : 0),
-      'Cache-Control': type.startsWith('image/') ? 'public, max-age=86400' : 'no-cache'
+      'Cache-Control': type.startsWith('image/') && !thumb ? 'public, max-age=86400' : 'no-cache'
     }
     if (range) headers['Content-Range'] = `bytes ${start}-${end}/${size}`
     const body = size ? (Readable.toWeb(createReadStream(path, { start, end })) as ReadableStream) : null
@@ -117,9 +117,9 @@ async function dlsiteJob(ids: number[] | null, background = false): Promise<JobS
   }
 }
 
-async function scanJob(background = false): Promise<JobSummary> {
+async function scanJob(background = false, quick = false): Promise<JobSummary> {
   try {
-    const r = await core.runScan(background).done
+    const r = await core.runScan(background, quick).done
     changed()
     // folders named only by their code: ask DLsite for a title
     const codeOnly = core.codeOnlyWorks()
@@ -147,7 +147,11 @@ function registerIpc(): void {
     return scanJob()
   })
   ipcMain.handle(IPC.libraryDirWorks, (_e, dir: string) => core.libraryDirWorks(dir))
-  ipcMain.handle(IPC.scan, () => scanJob())
+  ipcMain.handle(IPC.scan, (_e, quick?: boolean) => scanJob(false, !!quick))
+  ipcMain.handle(IPC.clearThumbs, async () => {
+    const n = await core.clearThumbnails()
+    return { ok: true, message: `썸네일 ${n}개를 지웠습니다. 화면에 보일 때 다시 만듭니다.` }
+  })
   ipcMain.handle(IPC.works, () => core.works())
   ipcMain.handle(IPC.work, (_e, id: number) => core.work(id))
   ipcMain.handle(IPC.setWorkPrefs, (_e, id: number, p: { sePref?: SePref; edition?: string }) => core.setWorkPrefs(id, p))

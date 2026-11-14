@@ -36,6 +36,19 @@ export function knownProbes(db: Db, workPath: string): KnownProbes {
   return new Map(rows.map((r) => [r.path, r]))
 }
 
+// 빠른 스캔: the saved works of a folder (its own and those split out of it)
+// when their tracks are exactly these files — else null (rescan it).
+export function unchangedWorks(db: Db, dir: string, files: string[]): string[] | null {
+  const works = db
+    .prepare('SELECT id, path FROM works WHERE path = ? OR substr(path, 1, ?) = ?')
+    .all(dir, dir.length + 1, dir + SPLIT_MARK) as { id: number; path: string }[]
+  if (!works.length) return null
+  const tracks = db.prepare(`SELECT path FROM tracks WHERE work_id IN (${works.map(() => '?').join(',')})`).all(...works.map((w) => w.id)) as { path: string }[]
+  if (tracks.length !== files.length) return null
+  const have = new Set(tracks.map((t) => t.path))
+  return files.every((f) => have.has(f)) ? works.map((w) => w.path) : null
+}
+
 // Insert or refresh a work; its tracks are replaced (progress, favorite, stars
 // and groups are kept).
 export function saveWork(db: Db, root: string, w: ScannedWork, now = Date.now()): number {

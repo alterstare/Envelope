@@ -14,7 +14,7 @@ import type { Db } from './db'
 import { loadSettings, saveSettings } from './settings'
 import { CancelledError, JobQueue } from './queue'
 import { ActionLog } from './actionLog'
-import { findWorks, scanWork, splitByTrackCode, workTitle } from './library/scan'
+import { findWorks, mediaFiles, scanWork, splitByTrackCode, workTitle } from './library/scan'
 import { splitCode } from '../shared/split'
 import * as library from './library'
 import type { ProgressUpdate } from './library'
@@ -179,9 +179,23 @@ export class EnvCore {
 
   // Scan every library folder (unchanged files keep their probed lengths) and
   // drop works that are gone.
-  runScan(background = false): { id: number; done: Promise<ScanResult> } {
+  // 썸네일 다시 만들기: the cached thumbnails go; each is made again when shown.
+  async clearThumbnails(): Promise<number> {
+    if (!this.paths.thumbsDir) return 0
+    let n = 0
+    for (const f of await fsp.readdir(this.paths.thumbsDir).catch(() => [] as string[])) {
+      if (!f.endsWith('.jpg')) continue
+      await fsp.unlink(join(this.paths.thumbsDir, f)).then(() => n++, () => undefined)
+    }
+    return n
+  }
+
+  // quick (빠른 스캔): a work whose audio / video files are the same ones as
+  // before is left as it is (no reading of lengths, names, subtitles) — only
+  // new works, works with files added or gone, and works that are gone.
+  runScan(background = false, quick = false): { id: number; done: Promise<ScanResult> } {
     return this.queue.add(
-      '라이브러리 스캔',
+      quick ? '빠른 스캔' : '라이브러리 스캔',
       async (ctx) => {
         const roots = this.settings().libraryDirs
         const found = new Set<string>()
@@ -197,6 +211,13 @@ export class EnvCore {
           const { root, dir } = all[i]
           ctx.report(i, all.length)
           try {
+            if (quick) {
+              const same = await library.unchangedWorks(this.db, dir, await mediaFiles(dir))
+              if (same) {
+                for (const p of same) found.add(p)
+                continue
+              }
+            }
             const scanned = await scanWork(dir, library.knownProbes(this.db, dir))
             // a folder of single-file works → one work per code in the file names
             for (const w of splitByTrackCode(scanned) ?? [scanned]) {
@@ -966,7 +987,7 @@ export class EnvCore {
     return dupes.planSetAside(this.db, ids)
   }
   runSetAside(items: SetAsideItem[]): { id: number; done: Promise<ToolResult> } {
-    return this.queue.add('중복 작품 따로 두기', (ctx) => dupes.runSetAside(this.log, items, ctx), { resumable: false })
+    return this.queue.add('중복 작품 제거 (중복 폴더로)', (ctx) => dupes.runSetAside(this.log, items, ctx), { resumable: false })
   }
 
   // ---- 작품 정보 (DLsite) ----

@@ -9,7 +9,7 @@ import { embedded, hosted } from '../embed'
 import type { AppInfo, Settings, SubMode } from '../../../shared/types'
 import { DraftContext, changed } from './settingsDraft'
 import { addLibraryFolder } from './Library'
-import { AddIcon, CheckIcon, CloseIcon, CloudDownloadIcon, DeleteIcon, EditIcon, FolderOpenIcon, RefreshIcon } from './icons'
+import { AddIcon, BoltIcon, CheckIcon, CloseIcon, CloudDownloadIcon, DeleteIcon, EditIcon, FolderOpenIcon, ImageIcon, RefreshIcon } from './icons'
 import { Confirm, Stepper } from './ui'
 import ShortcutSettings from './ShortcutSettings'
 import AutoSubSettings from './AutoSubSettings'
@@ -216,6 +216,29 @@ export default function SettingsView(): JSX.Element | null {
                 }}
               >
                 <RefreshIcon /> {scanning ? `스캔 중 ${scan.total ? `${scan.done} / ${scan.total}` : ''}` : '다시 스캔'}
+              </button>
+              <button
+                className="mini"
+                disabled={!!scanning || !s.libraryDirs.length}
+                title="새로 생긴 파일 · 지운 파일이 있는 작품만 다시 읽습니다(그대로인 작품은 건너뜀)"
+                onClick={async () => {
+                  const r = await window.api.scan(true)
+                  st().showToast(r)
+                  void st().loadWorks()
+                }}
+              >
+                <BoltIcon /> 빠른 스캔
+              </button>
+              <button
+                className="mini"
+                title="저장해 둔 표지 썸네일을 지우고, 화면에 보일 때 다시 만듭니다"
+                onClick={async () => {
+                  const r = await window.api.clearThumbnails()
+                  st().showToast(r)
+                  void st().loadWorks()
+                }}
+              >
+                <ImageIcon /> 썸네일 다시 만들기
               </button>
             </div>
           </div>

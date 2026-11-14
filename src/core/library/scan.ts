@@ -83,12 +83,26 @@ async function hasMedia(dir: string, depth = 0): Promise<boolean> {
   return false
 }
 
+// Every audio / video file in a work folder (빠른 스캔 compares these with
+// the saved tracks; nothing is opened).
+export async function mediaFiles(dir: string, out: string[] = []): Promise<string[]> {
+  for (const e of await readDir(dir)) {
+    const p = join(dir, e.name)
+    if (e.isDirectory()) await mediaFiles(p, out)
+    else if (e.isFile()) {
+      const ext = extname(e.name).toLowerCase()
+      if (AUDIO_EXTS.has(ext) || VIDEO_EXTS.has(ext)) out.push(p)
+    }
+  }
+  return out
+}
+
 // Works under a library folder: each folder right below it — or, for a
 // circle-style folder whose children carry work codes, those children.
 export async function findWorks(root: string): Promise<string[]> {
   const out: string[] = []
   for (const e of await readDir(root)) {
-    if (!e.isDirectory() || e.name === DUP_DIR) continue // 중복 작품 › 따로 두기
+    if (!e.isDirectory() || e.name === DUP_DIR) continue // 중복 작품 › 제거할 작품 (moved there)
     const p = join(root, e.name)
     if (CODE.test(e.name)) {
       out.push(p)

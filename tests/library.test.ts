@@ -1,4 +1,4 @@
-import { join } from 'path'
+import { basename, join } from 'path'
 import { renameSync, rmSync } from 'fs'
 import { afterEach, describe, expect, it } from 'vitest'
 import { EnvCore } from '../src/core'
@@ -277,6 +277,33 @@ describe('folders of single-file works (codes in the file names)', () => {
     rmSync(join(dir, '04M.お隣さんRJ166979.mp3'))
     expect((await core.runScan().done).failed).toEqual([])
     expect(core.works().map((w) => [w.title, w.tracks])).toEqual([['1〜99', 1]])
+    core.close()
+  })
+})
+
+describe('빠른 스캔', () => {
+  it('rereads only works whose files changed, adds new works and drops gone ones', async () => {
+    const root = tempDir()
+    tree(join(root, 'RJ01000011 そのまま'), { '01_話.mp3': mp3(2) })
+    tree(join(root, 'RJ01000012 足す'), { '01_話.mp3': mp3(2) })
+    tree(join(root, 'RJ01000013 消す'), { '01_話.mp3': mp3(2) })
+    const core = new EnvCore(':memory:')
+    core.saveSettings({ libraryDirs: [root] })
+    await core.runScan().done
+    const db = (core as unknown as { db: { prepare: (q: string) => { all: () => { path: string; scanned_at: number }[] } } }).db
+    const at = (): Map<string, number> => new Map(db.prepare('SELECT path, scanned_at FROM works').all().map((r) => [basename(r.path), r.scanned_at]))
+    const before = at()
+    await new Promise((r) => setTimeout(r, 5))
+    tree(join(root, 'RJ01000012 足す'), { '02_話.mp3': mp3(2) })
+    rmSync(join(root, 'RJ01000013 消す'), { recursive: true })
+    tree(join(root, 'RJ01000014 新しい'), { '01_話.mp3': mp3(2) })
+    const r = await core.runScan(false, true).done
+    expect(r.removed).toBe(1)
+    const after = at()
+    expect(after.get('RJ01000011 そのまま')).toBe(before.get('RJ01000011 そのまま')) // not read again
+    expect(after.get('RJ01000012 足す')).toBeGreaterThan(before.get('RJ01000012 足す')!)
+    expect(after.has('RJ01000014 新しい')).toBe(true)
+    expect(core.works().find((w) => w.code === 'RJ01000012')!.tracks).toBe(2)
     core.close()
   })
 })
