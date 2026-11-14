@@ -24,6 +24,12 @@ asarUnpack:
   - node_modules/better-sqlite3/**
   - node_modules/sharp/**
   - node_modules/@img/**
+extraResources:
+  # Noto Sans (bundled in the renderer) — its OFL-1.1 licence ships with the app
+  - from: node_modules/@fontsource-variable/noto-sans-kr/LICENSE
+    to: licenses/NotoSansKR-OFL.txt
+  - from: node_modules/@fontsource-variable/noto-sans-jp/LICENSE
+    to: licenses/NotoSansJP-OFL.txt
 win:
   # from Env_icon_v2.png: npm run icons (every size rendered on its own)
   icon: build/icon.ico

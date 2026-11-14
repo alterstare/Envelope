@@ -111,18 +111,25 @@ describe('언어 분류 · 연령 분류', () => {
     tree(root, {
       'RJ01000050 音声だけ/01.mp3': mp3(1),
       'RJ01000051 台本あり/01.mp3': mp3(1),
-      'RJ01000052 字幕あり/01.mp3': mp3(1)
+      'RJ01000052 字幕あり/01.mp3': mp3(1),
+      'RJ01000053 English subtitles/01.mp3': mp3(1),
+      'RJ01000054 【한국어 음성】/01.mp3': mp3(1)
     })
     writeFileSync(join(root, 'RJ01000051 台本あり', '台本.txt'), 'トラック1\nお兄ちゃん、おはよう。今日もいい天気だね。')
     writeFileSync(join(root, 'RJ01000052 字幕あり', '01.ko.vtt'), 'WEBVTT\n\n00:00.000 --> 00:01.000\n오빠, 좋은 아침\n')
+    // any language counts: one by the name's tag, one by the text
+    writeFileSync(join(root, 'RJ01000053 English subtitles', '01.en.srt'), '1\n00:00:00,000 --> 00:00:01,000\nGood morning\n')
+    writeFileSync(join(root, 'RJ01000053 English subtitles', '01.vtt'), 'WEBVTT\n\n00:00.000 --> 00:01.000\n哥哥早上好，今天天气真好呀，我们一起出去玩吧，好不好\n')
     const AGE: Record<string, unknown> = { RJ01000050: [{ work_name: 'x', options: 'JPN', age_category: 3 }], RJ01000051: [{ work_name: 'y', options: 'JPN', age_category: 1 }] }
     const core = new EnvCore(tempDir(), { dlsiteGet: async (u: string) => AGE[new URL(u).searchParams.get('workno')!] ?? [], dlsiteBytes: bytes })
     core.saveSettings({ libraryDirs: [root] })
     await core.runScan().done
     const of = (code: string) => core.works().find((w) => w.code === code)!
-    expect(of('RJ01000050').content).toEqual({ scripts: [], subs: {} })
-    expect(of('RJ01000051').content).toEqual({ scripts: ['ja'], subs: {} })
-    expect(of('RJ01000052').content).toEqual({ scripts: [], subs: { ko: 'user' } })
+    expect(of('RJ01000050').content).toEqual({ scripts: [], subs: {}, voice: 'ja' })
+    expect(of('RJ01000051').content).toEqual({ scripts: ['ja'], subs: {}, voice: 'ja' })
+    expect(of('RJ01000052').content).toEqual({ scripts: [], subs: { ko: 'user' }, voice: 'ja' })
+    expect(of('RJ01000053').content).toEqual({ scripts: [], subs: { en: 'user', zh: 'user' }, voice: 'ja' })
+    expect(of('RJ01000054').content.voice).toBe('ko')
     // a subtitle the program made: 일본어 자막 [자체 생성]
     const w = of('RJ01000050')
     await core.saveSubtitle(core.work(w.id)!.groups[0].chosen, 'ja', [{ start: 0, end: 1, text: 'おはよう' }])
