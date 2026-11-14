@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync } from 'fs'
-import { basename, join } from 'path'
+import { basename, dirname, join } from 'path'
 import sharp from 'sharp'
 import { afterEach, describe, expect, it } from 'vitest'
 import { EnvCore } from '../src/core'
@@ -252,16 +252,36 @@ describe('wav 정리 never loses a wav', () => {
     core.close()
   })
 
-  it('a trash that fails leaves the wav (a converted mp3 stays next to it)', async () => {
-    const { core, w } = await setup({ 'a.mp3': mp3(2), 'a.wav': wav(2), 'b.wav': wav(1) })
+  it('no Recycle Bin (network drive): the wav goes to "_wav 삭제 대기" in its library folder, which scans skip', async () => {
+    const { core, w } = await setup({ 'mp3/a.mp3': mp3(2), 'mp3/a.wav': wav(2), 'b.wav': wav(1) })
+    const root = dirname(w)
+    tree(join(root, '_wav 삭제 대기', 'RJ01000030 作品', 'mp3'), { 'a.wav': wav(1) }) // a name already taken there
     const plan = await core.planWav(null).done
     const r = await core.runWav(plan, async () => {
-      throw new Error('휴지통을 쓸 수 없음')
+      throw new Error('Failed to perform delete operation')
+    }).done
+    expect(r).toMatchObject({ ok: true, done: 2 })
+    expect(r.message).toContain('_wav 삭제 대기')
+    const hold = join(root, '_wav 삭제 대기', 'RJ01000030 作品')
+    expect(existsSync(join(hold, 'mp3', 'a (2).wav'))).toBe(true) // next to the one there before
+    expect(existsSync(join(hold, 'b.wav'))).toBe(true)
+    expect(existsSync(join(w, 'mp3', 'a.wav'))).toBe(false)
+    expect(existsSync(join(w, 'b.mp3'))).toBe(true) // converted
+    await core.runScan().done
+    expect(core.works().map((x) => x.title)).toEqual(['作品']) // the holding folder isn't a work
+    core.close()
+  }, 30000)
+
+  it('when the wav can be neither trashed nor moved it stays', async () => {
+    const { core, w } = await setup({ 'a.mp3': mp3(2), 'a.wav': wav(2) })
+    const plan = await core.planWav(null).done
+    core.saveSettings({ libraryDirs: [] })
+    await core.runScan().done // the work is gone from the DB: no library folder to move into
+    const r = await core.runWav(plan, async () => {
+      throw new Error('no')
     }).done
     expect(r.done).toBe(0)
     expect(existsSync(join(w, 'a.wav'))).toBe(true)
-    expect(existsSync(join(w, 'b.wav'))).toBe(true)
-    expect(existsSync(join(w, 'b.mp3'))).toBe(true)
     core.close()
-  }, 30000)
+  })
 })

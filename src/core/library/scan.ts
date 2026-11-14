@@ -19,6 +19,9 @@ import { splitPath } from '../../shared/split'
 export const AUDIO_EXTS = new Set(['.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.opus'])
 export const VIDEO_EXTS = new Set(['.mp4', '.m4v', '.webm'])
 export const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif'])
+// wav 정리 puts wavs the Recycle Bin can't take here (a network drive), to
+// be deleted by hand; scans skip it like the 중복 작품 folder.
+export const WAV_HOLD_DIR = '_wav 삭제 대기'
 const JUNK = /^(?:thumbs\.db|\.ds_store|desktop\.ini)$|^\._/i
 const CODE = /(?<![a-z0-9])([RVB]J\d{6,8})(?!\d)/i
 // Same track in two groups only if their lengths agree this closely: seconds,
@@ -102,7 +105,7 @@ export async function mediaFiles(dir: string, out: string[] = []): Promise<strin
 export async function findWorks(root: string): Promise<string[]> {
   const out: string[] = []
   for (const e of await readDir(root)) {
-    if (!e.isDirectory() || e.name === DUP_DIR) continue // 중복 작품 › 제거할 작품 (moved there)
+    if (!e.isDirectory() || e.name === DUP_DIR || e.name === WAV_HOLD_DIR) continue // 중복 작품 › 제거할 작품 (moved there)
     const p = join(root, e.name)
     if (CODE.test(e.name)) {
       out.push(p)

@@ -3,12 +3,13 @@
 // wav files go to the OS recycle bin (restored from there).
 import { createHash } from 'crypto'
 import { existsSync, promises as fs } from 'fs'
-import { basename, dirname, extname, join } from 'path'
+import { basename, dirname, extname, join, relative } from 'path'
 import type { CoverItem, RenameItem, ToolResult, WavItem } from '../../shared/types'
 import type { Db } from '../db'
 import type { ActionLog } from '../actionLog'
 import type { JobContext } from '../queue'
-import { readDir, workTitle } from '../library/scan'
+import { WAV_HOLD_DIR, readDir, workTitle } from '../library/scan'
+import { isInside } from '../media'
 import { splitCode } from '../../shared/split'
 import { probe } from '../library/probe'
 import { fillName, repairSiblings } from '../names/mojibake'
@@ -112,6 +113,21 @@ export async function planWav(db: Db, ids: number[] | null, ctx?: JobContext): P
   return out
 }
 
+// A wav the Recycle Bin can't take → <library folder>/_wav 삭제 대기/<the
+// same path inside it>; a free name if one is there already. Same drive, so a
+// rename (nothing copied).
+async function holdWav(db: Db, it: WavItem): Promise<string> {
+  const row = db.prepare('SELECT root FROM works WHERE id = ?').get(it.workId) as { root: string } | undefined
+  if (!row || !isInside(it.wav, row.root)) throw new Error('라이브러리 폴더 밖의 파일입니다')
+  const rel = relative(row.root, it.wav)
+  const base = join(row.root, WAV_HOLD_DIR, rel)
+  let to = base
+  for (let n = 2; existsSync(to); n++) to = join(dirname(base), `${stemOf(base)} (${n})${extname(base)}`)
+  await fs.mkdir(dirname(to), { recursive: true })
+  await fs.rename(it.wav, to)
+  return to
+}
+
 export async function runWav(
   db: Db,
   items: WavItem[],
@@ -119,7 +135,7 @@ export async function runWav(
   ctx: JobContext
 ): Promise<ToolResult> {
   const failed: string[] = []
-  const done: { wav: string; mp3: string; kind: string }[] = []
+  const done: { wav: string; mp3: string; kind: string; held?: string }[] = []
   const todo = items.filter((x) => x.kind !== 'skip')
   for (let i = 0; i < todo.length; i++) {
     if (ctx.signal.aborted) break
@@ -161,18 +177,27 @@ export async function runWav(
         await fs.utimes(it.mp3, st.atime, st.mtime) // keeps date sorting
       } else ctx.report(i, todo.length, `휴지통으로 보내는 중 · ${name}`)
       // Where there is no Recycle Bin (a network drive / NAS) Windows refuses
-      // and the wav stays — it is never deleted for good.
-      await deps.trash(it.wav).catch(() => {
-        throw new Error(`휴지통으로 보내지 못해 wav를 그대로 두었습니다(네트워크 드라이브처럼 휴지통이 없는 곳일 수 있습니다)${it.kind === 'convert' ? ' — 만든 mp3는 남아 있습니다' : ''}`)
-      })
-      done.push({ wav: it.wav, mp3: it.mp3, kind: it.kind })
+      // (never deletes for good): the wav is moved into "_wav 삭제 대기" in
+      // its library folder instead, to look over and delete by hand.
+      let held: string | null = null
+      try {
+        await deps.trash(it.wav)
+      } catch {
+        held = await holdWav(db, it).catch((e) => {
+          throw new Error(`휴지통으로 보내지 못했고 "${WAV_HOLD_DIR}" 폴더로도 옮기지 못해 wav를 그대로 두었습니다: ${String((e as Error)?.message ?? e)}${it.kind === 'convert' ? ' — 만든 mp3는 남아 있습니다' : ''}`)
+        })
+      }
+      done.push({ wav: it.wav, mp3: it.mp3, kind: it.kind, ...(held ? { held } : {}) })
     } catch (e) {
       failed.push(`${name}: ${String((e as Error)?.message ?? e)}`)
     }
   }
   ctx.report(todo.length, todo.length)
   const conv = done.filter((d) => d.kind === 'convert').length
-  const summary = `용량 최적화 · mp3 변환 ${conv}개, wav 삭제 ${done.length}개 (휴지통)`
+  const held = done.filter((d) => d.held).length
+  const summary =
+    `용량 최적화 · mp3 변환 ${conv}개, wav 삭제 ${done.length - held}개 (휴지통)` +
+    (held ? `, 휴지통이 없는 곳의 wav ${held}개는 "${WAV_HOLD_DIR}" 폴더로 옮김 (확인 후 직접 지우기)` : '')
   if (done.length)
     db.prepare('INSERT INTO file_history (kind, summary, payload_json, created_at) VALUES (?, ?, ?, ?)').run('wav', summary, JSON.stringify(done), Date.now())
   return { ok: !failed.length, message: `${summary}${failed.length ? `, ${failed.length}개 실패` : ''}`, done: done.length, failed }
