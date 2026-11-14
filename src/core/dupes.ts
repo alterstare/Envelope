@@ -11,6 +11,7 @@ import type { Db } from './db'
 import type { ActionLog } from './actionLog'
 import type { JobContext } from './queue'
 import { nfkc } from './names/normalize'
+import { splitCode } from '../shared/split'
 
 export const DUP_DIR = '_중복 작품'
 const SET_ASIDE = 'tools.setaside'
@@ -93,7 +94,8 @@ export function planSetAside(db: Db, ids: number[]): SetAsideItem[] {
   const out: SetAsideItem[] = []
   for (const id of ids) {
     const w = db.prepare('SELECT path, root FROM works WHERE id = ?').get(id) as { path: string; root: string } | undefined
-    if (!w) continue
+    // a work split out of a shared folder has no folder of its own to move
+    if (!w || splitCode(w.path)) continue
     const base = join(w.root, DUP_DIR, basename(w.path))
     let to = base
     for (let n = 2; existsSync(to) || taken.has(to.toLowerCase()); n++) to = `${base} (${n})`

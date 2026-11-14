@@ -12,6 +12,7 @@ import type { JSX, ReactNode } from 'react'
 import { useStore } from '../store'
 import type { ToolTab, ToolsMode } from '../store'
 import type { CoverItem, CoverSaveItem, DupGroup, HistoryEntry, SetAsideItem, NameStatus, ProgressEvent, RenameItem, ScriptSource, SubExportItem, ToolResult, WavItem, WorkSummary } from '../../../shared/types'
+import { workDir } from '../../../shared/split'
 import { clock } from '../format'
 import { KeyboardArrowLeftIcon, AudioFileIcon, CancelIcon, CloseIcon, CloudDownloadIcon, ContentCopyIcon, DriveFileRenameOutlineIcon, EditIcon, FileOpenIcon, FolderOpenIcon, ImageIcon, LibraryMusicIcon, PauseIcon, PlayArrowIcon, ScheduleIcon, SearchIcon, SubtitlesIcon, UndoIcon, ArrowForwardIcon } from './icons'
 import { Confirm, Dropdown, Toggle } from './ui'
@@ -378,7 +379,7 @@ function WorkLine({
       <span className="tr-side" onClick={(e) => (e.target as HTMLElement).closest('button, .dd') && e.preventDefault()}>
         {side}
       </span>
-      <FolderButton path={w.path} />
+      <FolderButton path={workDir(w.path)} />
     </label>
   )
 }
@@ -499,7 +500,7 @@ function NamesApp({
             <div className="tgroup-head check">
               <span className="tgroup-title">{w.title}</span>
               <span className="hint">{total(by.get(w.id)!.length, '복구')}</span>
-              <FolderButton path={w.path} />
+              <FolderButton path={workDir(w.path)} />
             </div>
             {by.get(w.id)!.map((r) => (
               <div key={r.id} className="trow-tool">
@@ -895,7 +896,7 @@ function CoverChoices({ scope, onChange }: { scope: number[] | null; onChange?: 
                 </button>
               ))}
             </span>
-            <FolderButton path={w.path} />
+            <FolderButton path={workDir(w.path)} />
           </div>
         )
       })}
@@ -1037,8 +1038,8 @@ function DupsPanel({ scope, mode, tick, onDone }: { scope: number[] | null; mode
                   <span className="tr-name" title={w.title}>
                     {w.title}
                   </span>
-                  <span className="tr-sub hint" title={w.path}>
-                    {w.path}
+                  <span className="tr-sub hint" title={workDir(w.path)}>
+                    {workDir(w.path)}
                   </span>
                 </span>
                 <span className="tr-side">
@@ -1048,7 +1049,7 @@ function DupsPanel({ scope, mode, tick, onDone }: { scope: number[] | null; mode
                   <Tag kind="mute">{m.formats.map((f) => f.replace('.', '')).join(' · ') || '파일 없음'}</Tag>
                   <Tag kind="mute">{mb(m.size)}</Tag>
                   {(w.played > 0 || w.favorite || w.rank > 0) && <Tag kind="mute">들은 기록</Tag>}
-                  <FolderButton path={w.path} />
+                  <FolderButton path={workDir(w.path)} />
                 </span>
               </label>
             )

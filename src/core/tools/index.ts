@@ -9,6 +9,7 @@ import type { Db } from '../db'
 import type { ActionLog } from '../actionLog'
 import type { JobContext } from '../queue'
 import { readDir, workTitle } from '../library/scan'
+import { splitCode } from '../../shared/split'
 import { probe } from '../library/probe'
 import { fillName, repairSiblings } from '../names/mojibake'
 import { namesMap, needsTranslation } from '../names/translate'
@@ -34,8 +35,13 @@ interface WorkRef {
   cover_pref: string | null
 }
 
+// Works the folder tools act on. A work split out of a shared folder by the
+// codes in its file names is left out: those tools work on a whole folder,
+// and its folder holds many other works.
 function worksOf(db: Db, ids: number[] | null): WorkRef[] {
-  const all = db.prepare('SELECT id, path, title, cover_path, images_json, dl_cover, cover_pref FROM works ORDER BY title').all() as WorkRef[]
+  const all = (db.prepare('SELECT id, path, title, cover_path, images_json, dl_cover, cover_pref FROM works ORDER BY title').all() as WorkRef[]).filter(
+    (w) => !splitCode(w.path)
+  )
   return ids ? all.filter((w) => ids.includes(w.id)) : all
 }
 

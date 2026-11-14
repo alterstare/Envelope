@@ -2,7 +2,8 @@ import { join } from 'path'
 import { renameSync, rmSync } from 'fs'
 import { afterEach, describe, expect, it } from 'vitest'
 import { EnvCore } from '../src/core'
-import { findWorks, scanWork } from '../src/core/library/scan'
+import { findWorks, scanWork, splitByTrackCode } from '../src/core/library/scan'
+import { splitCode, workDir } from '../src/shared/split'
 import type { ScannedTrack } from '../src/core/library/scan'
 import { parseMp3, parseWav } from '../src/core/library/probe'
 import { isInside, parseRange } from '../src/core/media'
@@ -228,6 +229,54 @@ describe('bookmarks', () => {
     expect(core.work(id)!.bookmarks[1].name).toBe('다시')
     core.deleteBookmark(b)
     expect(core.work(id)!.bookmarks).toHaveLength(1)
+    core.close()
+  })
+})
+
+describe('folders of single-file works (codes in the file names)', () => {
+  it('splits one work per code and keeps uncoded files as the folder work', () => {
+    const t = (title: string): ScannedTrack => ({ title }) as ScannedTrack
+    const base = { path: 'X:/lib/1〜99', code: null, title: '1〜99', cover: null, images: [], mojibake: false, addedAt: 1 }
+    const parts = splitByTrackCode({ ...base, tracks: [t('01M.愛海のRJ222673'), t('02S.アイドルRJ231941'), t('03M.お隣さんRJ166979'), t('04M.お隣さんRJ166979'), t('05.list')] })!
+    expect(parts.map((p) => [p.path, p.code, p.title, p.tracks.length])).toEqual([
+      ['X:/lib/1〜99|RJ222673', 'RJ222673', '愛海の', 1],
+      ['X:/lib/1〜99|RJ231941', 'RJ231941', 'アイドル', 1],
+      ['X:/lib/1〜99|RJ166979', 'RJ166979', 'お隣さん', 2],
+      ['X:/lib/1〜99', null, '1〜99', 1]
+    ])
+    expect(workDir(parts[0].path)).toBe('X:/lib/1〜99')
+    expect(splitCode(parts[0].path)).toBe('RJ222673')
+    // one code only, a coded folder, or mostly uncoded files: left as it is
+    expect(splitByTrackCode({ ...base, tracks: [t('01RJ222673'), t('02RJ222673')] })).toBeNull()
+    expect(splitByTrackCode({ ...base, code: 'RJ01000001', tracks: [t('01RJ222673'), t('02RJ231941')] })).toBeNull()
+    expect(splitByTrackCode({ ...base, tracks: [t('01RJ222673'), t('02RJ231941'), t('03'), t('04')] })).toBeNull()
+  })
+
+  it('scans them as works, takes the files over from the old folder work and back', async () => {
+    const root = tempDir()
+    const dir = join(root, '1〜99')
+    tree(dir, { '01M.愛海のオナニーRJ222673.mp3': mp3(2) })
+    const core = new EnvCore(':memory:')
+    core.saveSettings({ libraryDirs: [root] })
+    await core.runScan().done
+    expect(core.works().map((w) => w.title)).toEqual(['1〜99']) // one code: a normal work
+    tree(dir, { '02S.アイドルRJ231941.mp3': mp3(3), '03M.お隣さんRJ166979.mp3': mp3(2), '04M.お隣さんRJ166979.mp3': mp3(2) })
+    const r = await core.runScan().done
+    expect(r.failed).toEqual([])
+    const ws = core.works()
+    expect(ws.map((w) => [w.code, w.tracks]).sort()).toEqual([['RJ166979', 2], ['RJ222673', 1], ['RJ231941', 1]])
+    expect(r.removed).toBe(1) // the folder work, its files now in the split works
+    expect(core.work(ws.find((w) => w.code === 'RJ231941')!.id)!.groups[0].versions[0].duration).toBeCloseTo(3, 0)
+    // again: same works (same ids)
+    const ids = ws.map((w) => w.id).sort()
+    await core.runScan().done
+    expect(core.works().map((w) => w.id).sort()).toEqual(ids)
+    // back to one code → the folder is one work again
+    rmSync(join(dir, '02S.アイドルRJ231941.mp3'))
+    rmSync(join(dir, '03M.お隣さんRJ166979.mp3'))
+    rmSync(join(dir, '04M.お隣さんRJ166979.mp3'))
+    expect((await core.runScan().done).failed).toEqual([])
+    expect(core.works().map((w) => [w.title, w.tracks])).toEqual([['1〜99', 1]])
     core.close()
   })
 })

@@ -14,6 +14,7 @@ import { probe } from './probe'
 import { LANG_SUFFIX, SUB_EXTS, langOfName } from '../subtitle'
 import type { SubFile } from '../../shared/types'
 import { DUP_DIR } from '../dupes'
+import { splitPath } from '../../shared/split'
 
 export const AUDIO_EXTS = new Set(['.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.opus'])
 export const VIDEO_EXTS = new Set(['.mp4', '.m4v', '.webm'])
@@ -334,4 +335,36 @@ function rankBackgrounds(images: RawFile[]): RawFile[] {
     .map((f) => ({ f, s: bgScore(f) }))
     .sort((a, b) => b.s - a.s || naturalCompare(a.f.name, b.f.name))
     .map((x) => x.f)
+}
+
+// ---- folders of single-file works ----
+
+// A folder with no code of its own whose audio files each carry one
+// ("01M.タイトルRJ222673.mp3") holds many works: one per code (a work spread
+// over two files keeps both). Split when 2+ codes and most tracks (80%) have
+// one; tracks without a code stay as the folder's own work. Program only —
+// the files stay where they are (shared/split.ts).
+const SPLIT_MIN_SHARE = 0.8
+const TRACK_LEAD = /^[0-9０-９]+[a-zA-Z]?[._\-\s]+/
+
+export function splitByTrackCode(w: ScannedWork): ScannedWork[] | null {
+  if (w.code || !w.tracks.length) return null
+  const byCode = new Map<string, ScannedTrack[]>()
+  const rest: ScannedTrack[] = []
+  for (const t of w.tracks) {
+    const m = t.title.match(CODE)
+    if (!m) rest.push(t)
+    else {
+      const c = m[1].toUpperCase()
+      byCode.set(c, [...(byCode.get(c) ?? []), t])
+    }
+  }
+  if (byCode.size < 2 || (w.tracks.length - rest.length) / w.tracks.length < SPLIT_MIN_SHARE) return null
+  const out: ScannedWork[] = []
+  for (const [code, tracks] of byCode) {
+    const name = tracks[0].title.replace(CODE, '').replace(TRACK_LEAD, '').replace(/^[\s_\-]+|[\s_\-]+$/g, '')
+    out.push({ ...w, path: splitPath(w.path, code), code, title: name || code, cover: null, images: [], tracks, mojibake: tracks.some((t) => t.mojibake) })
+  }
+  if (rest.length) out.push({ ...w, tracks: rest, mojibake: rest.some((t) => t.mojibake) })
+  return out
 }

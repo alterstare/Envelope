@@ -18,18 +18,21 @@ import type {
   WorkSummary, SubLang, WorkContent, WorkAge } from '../../shared/types'
 import type { KnownProbes, ScannedWork } from './scan'
 import { naturalCompare } from '../names/normalize'
+import { SPLIT_MARK } from '../../shared/split'
 
 // A track counts as heard once the position is this close to its end (s).
 export const FINISHED_MARGIN = 10
 
 // ---- saving scans ----
 
+// The folder's own work and the works split out of it ("<folder>|<code>").
 export function knownProbes(db: Db, workPath: string): KnownProbes {
   const rows = db
     .prepare(
-      `SELECT t.path, t.size, t.mtime, t.duration, t.bitrate FROM tracks t JOIN works w ON w.id = t.work_id WHERE w.path = ?`
+      `SELECT t.path, t.size, t.mtime, t.duration, t.bitrate FROM tracks t JOIN works w ON w.id = t.work_id
+       WHERE w.path = ? OR substr(w.path, 1, ?) = ?`
     )
-    .all(workPath) as { path: string; size: number; mtime: number; duration: number | null; bitrate: number | null }[]
+    .all(workPath, workPath.length + 1, workPath + SPLIT_MARK) as { path: string; size: number; mtime: number; duration: number | null; bitrate: number | null }[]
   return new Map(rows.map((r) => [r.path, r]))
 }
 
@@ -60,9 +63,14 @@ export function saveWork(db: Db, root: string, w: ScannedWork, now = Date.now())
                            duration, bitrate, size, mtime, mojibake, rel_dir, subs_json)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    for (const t of w.tracks)
+    // A file another work had (a folder just split into works by code, or
+    // back) moves to this one.
+    const take = db.prepare('DELETE FROM tracks WHERE path = ? AND work_id != ?')
+    for (const t of w.tracks) {
+      take.run(t.path, id)
       ins.run(id, t.path, t.title, t.ext, t.kind, t.role, t.edition, t.editionKey, t.se, t.formatDir, t.groupKey, t.sort,
         t.duration, t.bitrate, t.size, t.mtime, t.mojibake ? 1 : 0, t.relDir, JSON.stringify(t.subs))
+    }
     return id
   })()
 }

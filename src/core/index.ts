@@ -14,7 +14,8 @@ import type { Db } from './db'
 import { loadSettings, saveSettings } from './settings'
 import { CancelledError, JobQueue } from './queue'
 import { ActionLog } from './actionLog'
-import { findWorks, scanWork, workTitle } from './library/scan'
+import { findWorks, scanWork, splitByTrackCode, workTitle } from './library/scan'
+import { splitCode } from '../shared/split'
 import * as library from './library'
 import type { ProgressUpdate } from './library'
 import type { AsrEngine, Fetch, WhisperModel } from './asr/engines'
@@ -196,11 +197,15 @@ export class EnvCore {
           const { root, dir } = all[i]
           ctx.report(i, all.length)
           try {
-            const id = library.saveWork(this.db, root, await scanWork(dir, library.knownProbes(this.db, dir)))
-            found.add(dir)
-            // 원래 이름 기록: names / Japanese subtitles not seen before
-            await originals.recordWork(this.db, id).catch(() => false)
-            await this.scanContent(id).catch(() => undefined)
+            const scanned = await scanWork(dir, library.knownProbes(this.db, dir))
+            // a folder of single-file works → one work per code in the file names
+            for (const w of splitByTrackCode(scanned) ?? [scanned]) {
+              const id = library.saveWork(this.db, root, w)
+              found.add(w.path)
+              // 원래 이름 기록: names / Japanese subtitles not seen before
+              await originals.recordWork(this.db, id).catch(() => false)
+              await this.scanContent(id).catch(() => undefined)
+            }
           } catch (e) {
             failed.push(`${dir}: ${String((e as Error)?.message ?? e)}`)
           }
@@ -654,7 +659,7 @@ export class EnvCore {
       const out: CoverSaveItem[] = []
       for (const w of rows) {
         if (ids && !ids.includes(w.id)) continue
-        if (!existsSync(w.dl_cover)) continue
+        if (splitCode(w.path) || !existsSync(w.dl_cover)) continue // a split work's folder is shared
         const ext = extname(w.dl_cover) || '.jpg'
         const to = [join(w.path, `cover${ext}`), join(w.path, `cover (DLsite)${ext}`)].find((p) => !existsSync(p))
         if (to) out.push({ id: String(w.id), workId: w.id, workTitle: this.work(w.id)?.title ?? w.title, from: w.dl_cover, to })
@@ -888,6 +893,8 @@ export class EnvCore {
     const works = this.db.prepare('SELECT id, path, root FROM works').all() as { id: number; path: string; root: string }[]
     const touched = works.filter((w) => pairs.some((x) => under(x.from, w.path) || under(w.path, x.from))).map((w) => w.id)
     for (const w of works) {
+      // works split out of a folder are rebuilt by the next library scan
+      if (splitCode(w.path)) continue
       if (!pairs.some((x) => under(x.from, w.path) || under(w.path, x.from))) continue
       const old = this.db.prepare('SELECT path, group_key AS gk FROM tracks WHERE work_id = ?').all(w.id) as { path: string; gk: string }[]
       const known = new Map([...library.knownProbes(this.db, w.path)].map(([p, v]) => [map(p), { ...v, path: map(p) }]))
