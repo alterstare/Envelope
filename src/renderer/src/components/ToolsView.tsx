@@ -83,7 +83,7 @@ function Row({ tab, it, root, onEdit }: { tab: ToolTab; it: Item; root: string; 
                 <ArrowForwardIcon className="txt-arrow" /> {name(w.mp3)} · {clock(w.wavSeconds)}
               </>
             )}
-            {(w.kind === 'delete' || w.kind === 'check') && `mp3: ${name(w.mp3)} · ${clock(w.wavSeconds)} / ${clock(w.mp3Seconds)}`}
+            {(w.kind === 'delete' || w.kind === 'check') && `mp3: ${rel(w.mp3, root)} · ${clock(w.wavSeconds)} / ${clock(w.mp3Seconds)}`}
             {w.kind === 'skip' && w.reason}
           </span>
         </span>

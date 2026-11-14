@@ -285,3 +285,42 @@ describe('wav 정리 never loses a wav', () => {
     core.close()
   })
 })
+
+describe('wav 정리 across folders of a work (mp3/ · wav/)', () => {
+  it('deletes a wav only when an mp3 elsewhere is certainly the same audio; anything less certain is converted', async () => {
+    const root = tempDir()
+    const a = join(root, 'RJ01000040 SE 있음 없음')
+    tree(a, {
+      'mp3/SEあり/01_話.mp3': mp3(2),
+      'mp3/SEなし/01_話.mp3': mp3(2),
+      'wav/SEあり/01_話.wav': wav(2), // ↔ mp3/SEあり: same track, SE on both → delete
+      'wav/SEなし/01_話.wav': wav(2), // ↔ mp3/SEなし → delete (never the SEあり one)
+      'wav/SEなし/02_話.wav': wav(3), // mp3/SEなし/02 is shorter → convert
+      'mp3/SEなし/02_話.mp3': mp3(1)
+    })
+    const b = join(root, 'RJ01000041 SE 모름')
+    tree(b, { 'MP3/01_話.mp3': mp3(2), 'WAV/01_話.wav': wav(2) }) // SE unknown → convert
+    const c = join(root, 'RJ01000042 후보 둘')
+    tree(c, { 'mp3/SEあり/01_話.mp3': mp3(2), 'mp3_2/SEあり/01_話.mp3': mp3(2), 'wav/SEあり/01_話.wav': wav(2) }) // two candidates → convert
+    const d = join(root, 'RJ01000043 SE 추측')
+    tree(d, { '本篇/mp3/01_話.mp3': mp3(2), '本篇/wav/01_話.wav': wav(2), 'SEなし/01_話.mp3': mp3(2) }) // SE of 本篇 only guessed → convert
+    const core = new EnvCore(':memory:')
+    core.saveSettings({ libraryDirs: [root] })
+    await core.runScan().done
+    const plan = await core.planWav(null).done
+    const item = (p: string) => plan.find((x) => x.wav === p)!
+    expect(item(join(a, 'wav/SEあり/01_話.wav'))).toMatchObject({ kind: 'delete', mp3: join(a, 'mp3/SEあり/01_話.mp3') })
+    expect(item(join(a, 'wav/SEなし/01_話.wav'))).toMatchObject({ kind: 'delete', mp3: join(a, 'mp3/SEなし/01_話.mp3') })
+    expect(item(join(a, 'wav/SEなし/02_話.wav')).kind).toBe('convert')
+    expect(item(join(b, 'WAV/01_話.wav')).kind).toBe('convert')
+    expect(item(join(c, 'wav/SEあり/01_話.wav')).kind).toBe('convert')
+    expect(item(join(d, '本篇/wav/01_話.wav')).kind).toBe('convert')
+
+    const bin = tempDir()
+    const r = await core.runWav(plan.filter((x) => x.kind === 'delete'), async (p) => renameSync(p, join(bin, basename(p) + Math.random()))).done
+    expect(r).toMatchObject({ ok: true, done: 2 })
+    expect(existsSync(join(a, 'wav/SEあり/01_話.wav'))).toBe(false)
+    expect(existsSync(join(a, 'mp3/SEあり/01_話.mp3'))).toBe(true)
+    core.close()
+  })
+})

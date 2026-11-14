@@ -9,6 +9,7 @@ import type { Db } from '../db'
 import type { ActionLog } from '../actionLog'
 import type { JobContext } from '../queue'
 import { WAV_HOLD_DIR, readDir, workTitle } from '../library/scan'
+import { seOf } from '../library/roles'
 import { isInside } from '../media'
 import { splitCode } from '../../shared/split'
 import { probe } from '../library/probe'
@@ -76,6 +77,40 @@ function clock(s: number | null): string {
 
 // ---------- wav 정리 ----------
 
+interface Known {
+  path: string
+  g: string // group: versions of one track
+  e: string // edition
+  se: string
+  dir: string // folder inside the work, '/'-joined
+  title: string
+}
+
+// SE as written in the track's own folder names or file name — not the
+// scan's guess (a group with a "SEなし" folder makes its unmarked versions
+// "SE있음"): only a written SE is certain.
+function writtenSe(t: Known): 'on' | 'off' | null {
+  const said = [...t.dir.split('/'), t.title].map(seOf).filter((x): x is 'on' | 'off' => x !== null)
+  return said.length ? said[said.length - 1] : null // the nearest says it
+}
+
+// The one mp3 elsewhere in the work that is certainly the wav's audio (see
+// planWav), or null.
+async function sameElsewhere(wav: string, wavSeconds: number, files: string[], known: Map<string, Known>): Promise<{ mp3: string; seconds: number } | null> {
+  const t = known.get(wav)
+  const se = t && writtenSe(t)
+  if (!t || !t.g || !se) return null
+  const found: { mp3: string; seconds: number }[] = []
+  for (const f of files) {
+    if (extname(f).toLowerCase() !== '.mp3' || dirname(f) === dirname(wav)) continue
+    const m = known.get(f)
+    if (!m || m.g !== t.g || m.e !== t.e || writtenSe(m) !== se) continue
+    const s = await seconds(f)
+    if (s !== null && Math.abs(s - wavSeconds) <= SAME_LENGTH_S) found.push({ mp3: f, seconds: s })
+  }
+  return found.length === 1 ? found[0] : null
+}
+
 export async function planWav(db: Db, ids: number[] | null, ctx?: JobContext): Promise<WavItem[]> {
   const out: WavItem[] = []
   const works = worksOf(db, ids)
@@ -83,6 +118,13 @@ export async function planWav(db: Db, ids: number[] | null, ctx?: JobContext): P
     ctx?.report(i, works.length)
     const w = works[i]
     const files = await walkFiles(w.path)
+    // what the scan knows of each track: the same track's versions (group),
+    // its edition and SE — for an mp3 of the wav in another folder of the work
+    const known = new Map(
+      (db.prepare('SELECT path, group_key AS g, edition_key AS e, se, rel_dir AS dir, title FROM tracks WHERE work_id = ?').all(w.id) as Known[]).map(
+        (t) => [t.path, t]
+      )
+    )
     const byDir = new Map<string, string[]>()
     for (const f of files) byDir.set(dirname(f), [...(byDir.get(dirname(f)) ?? []), f])
     for (const list of byDir.values()) {
@@ -99,7 +141,14 @@ export async function planWav(db: Db, ids: number[] | null, ctx?: JobContext): P
           continue
         }
         if (!pair) {
-          out.push({ ...base, kind: 'convert', mp3: join(dirname(wav), `${stemOf(wav)}.mp3`), wavSeconds, mp3Seconds: null })
+          // No mp3 next to it: one in another folder of the work (mp3/ · wav/)
+          // counts only when it is CERTAINLY the same audio — the same track
+          // and edition, SE written in the names on both sides and the same
+          // (SE있음 / SE없음 versions are as long as each other), as long (±1 s), and the only
+          // such mp3. Anything less certain: converted as before.
+          const other = await sameElsewhere(wav, wavSeconds, files, known)
+          if (other) out.push({ ...base, kind: 'delete', mp3: other.mp3, wavSeconds, mp3Seconds: other.seconds })
+          else out.push({ ...base, kind: 'convert', mp3: join(dirname(wav), `${stemOf(wav)}.mp3`), wavSeconds, mp3Seconds: null })
           continue
         }
         const mp3Seconds = await seconds(pair)
@@ -144,8 +193,11 @@ export async function runWav(
     try {
       // Checked again right before anything happens — files can change after
       // 확인하기: the wav must be the one checked, and a wav that already has
-      // an mp3 goes only while that mp3 is still there, next to it, as long.
-      if (dirname(it.mp3) !== dirname(it.wav)) throw new Error('mp3가 같은 폴더에 있지 않습니다')
+      // an mp3 goes only while that mp3 is still there, in the same work
+      // folder, as long.
+      const wp = (db.prepare('SELECT path FROM works WHERE id = ?').get(it.workId) as { path: string } | undefined)?.path
+      if (!wp || !isInside(it.wav, wp) || !isInside(it.mp3, wp)) throw new Error('mp3와 wav가 같은 작품 폴더에 있지 않습니다')
+      if (it.kind === 'convert' && dirname(it.mp3) !== dirname(it.wav)) throw new Error('mp3는 wav 옆에 만듭니다')
       const wavNow = await fs.stat(it.wav)
       if (wavNow.size !== it.bytes) throw new Error('확인한 뒤 wav가 바뀌었습니다. 다시 확인해 주세요')
       if (it.kind !== 'convert') {
