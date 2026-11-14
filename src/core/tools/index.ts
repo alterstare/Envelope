@@ -126,6 +126,18 @@ export async function runWav(
     const it = todo[i]
     const name = basename(it.wav)
     try {
+      // Checked again right before anything happens — files can change after
+      // 확인하기: the wav must be the one checked, and a wav that already has
+      // an mp3 goes only while that mp3 is still there, next to it, as long.
+      if (dirname(it.mp3) !== dirname(it.wav)) throw new Error('mp3가 같은 폴더에 있지 않습니다')
+      const wavNow = await fs.stat(it.wav)
+      if (wavNow.size !== it.bytes) throw new Error('확인한 뒤 wav가 바뀌었습니다. 다시 확인해 주세요')
+      if (it.kind !== 'convert') {
+        const w = await seconds(it.wav)
+        const m = await seconds(it.mp3)
+        if (w === null || m === null || Math.abs(w - m) > SAME_LENGTH_S)
+          throw new Error(m === null ? 'mp3가 없거나 읽을 수 없어 wav를 그대로 둡니다' : `재생시간이 다릅니다 (wav ${clock(w)} · mp3 ${clock(m)}) — wav를 그대로 둡니다`)
+      }
       if (it.kind === 'convert') {
         ctx.report(i, todo.length, `mp3로 바꾸는 중 · ${name}`)
         try {
@@ -148,7 +160,11 @@ export async function runWav(
         const st = await fs.stat(it.wav)
         await fs.utimes(it.mp3, st.atime, st.mtime) // keeps date sorting
       } else ctx.report(i, todo.length, `휴지통으로 보내는 중 · ${name}`)
-      await deps.trash(it.wav)
+      // Where there is no Recycle Bin (a network drive / NAS) Windows refuses
+      // and the wav stays — it is never deleted for good.
+      await deps.trash(it.wav).catch(() => {
+        throw new Error(`휴지통으로 보내지 못해 wav를 그대로 두었습니다(네트워크 드라이브처럼 휴지통이 없는 곳일 수 있습니다)${it.kind === 'convert' ? ' — 만든 mp3는 남아 있습니다' : ''}`)
+      })
       done.push({ wav: it.wav, mp3: it.mp3, kind: it.kind })
     } catch (e) {
       failed.push(`${name}: ${String((e as Error)?.message ?? e)}`)

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, utimesSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync } from 'fs'
 import { basename, join } from 'path'
 import sharp from 'sharp'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -200,4 +200,68 @@ describe('a work\'s own cover choice', () => {
     expect(core.works()[0].cover?.endsWith('cover.jpg')).toBe(true)
     core.close()
   })
+})
+
+// A VBR-style mp3: one frame with a Xing header (frames + bytes), then data —
+// `keep` cuts the file short like an interrupted copy.
+function xingMp3(seconds: number, keep = 1): Buffer {
+  const size = Math.round(seconds * 16000)
+  const b = Buffer.alloc(size)
+  b.set([0xff, 0xfb, 0x90, 0x64], 0) // MPEG-1 L3 128k 44.1k joint stereo
+  b.write('Xing', 36, 'ascii')
+  b.writeUInt32BE(3, 40) // frames + bytes
+  b.writeUInt32BE(Math.round((seconds * 44100) / 1152), 44)
+  b.writeUInt32BE(size, 48)
+  return b.subarray(0, Math.round(size * keep))
+}
+
+describe('wav 정리 never loses a wav', () => {
+  const setup = async (files: Record<string, Buffer>): Promise<{ core: EnvCore; w: string; bin: string; trash: (p: string) => Promise<void> }> => {
+    const root = tempDir()
+    const w = join(root, 'RJ01000030 作品')
+    tree(w, files)
+    const core = new EnvCore(':memory:')
+    core.saveSettings({ libraryDirs: [root] })
+    await core.runScan().done
+    const bin = tempDir()
+    return { core, w, bin, trash: async (p) => renameSync(p, join(bin, basename(p))) }
+  }
+
+  it('a cut-off mp3 is not taken for a copy of the wav', async () => {
+    const { core, w } = await setup({ 'a.mp3': xingMp3(2), 'a.wav': wav(2), 'b.mp3': xingMp3(2, 0.5), 'b.wav': wav(2) })
+    const plan = await core.planWav(null).done
+    expect(plan.find((p) => p.wav.endsWith('a.wav'))?.kind).toBe('delete') // whole file: fine
+    expect(plan.find((p) => p.wav.endsWith('b.wav'))?.kind).toBe('skip') // half of it: wav stays
+    expect(existsSync(join(w, 'b.wav'))).toBe(true)
+    core.close()
+  })
+
+  it('checks again when it runs: mp3 gone or shorter, wav changed → the wav stays', async () => {
+    const { core, w, bin, trash } = await setup({ 'a.mp3': mp3(2), 'a.wav': wav(2), 'b.mp3': mp3(2), 'b.wav': wav(2), 'c.mp3': mp3(2), 'c.wav': wav(2), 'd.wav': wav(1) })
+    const plan = await core.planWav(null).done
+    expect(plan.filter((p) => p.kind === 'delete')).toHaveLength(3)
+    rmSync(join(w, 'a.mp3')) // deleted after 확인하기
+    tree(w, { 'b.mp3': mp3(0.5) }) // replaced by a shorter one
+    tree(w, { 'c.wav': wav(3), 'd.wav': wav(2) }) // wavs changed
+    const r = await core.runWav(plan, trash).done
+    expect(r.done).toBe(0)
+    expect(r.failed).toHaveLength(4)
+    for (const f of ['a.wav', 'b.wav', 'c.wav', 'd.wav']) expect(existsSync(join(w, f))).toBe(true)
+    expect(existsSync(join(w, 'd.mp3'))).toBe(false)
+    expect(readdirSync(bin)).toEqual([])
+    core.close()
+  })
+
+  it('a trash that fails leaves the wav (a converted mp3 stays next to it)', async () => {
+    const { core, w } = await setup({ 'a.mp3': mp3(2), 'a.wav': wav(2), 'b.wav': wav(1) })
+    const plan = await core.planWav(null).done
+    const r = await core.runWav(plan, async () => {
+      throw new Error('휴지통을 쓸 수 없음')
+    }).done
+    expect(r.done).toBe(0)
+    expect(existsSync(join(w, 'a.wav'))).toBe(true)
+    expect(existsSync(join(w, 'b.wav'))).toBe(true)
+    expect(existsSync(join(w, 'b.mp3'))).toBe(true)
+    core.close()
+  }, 30000)
 })
