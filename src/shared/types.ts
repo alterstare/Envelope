@@ -56,6 +56,7 @@ export interface Settings {
   allowAudioUpload: boolean // 음성을 밖으로 보내기 (Groq 받아쓰기)
   allowTextUpload: boolean // 글자를 밖으로 보내기 (번역)
   nameDisplay: 'original' | 'translated' // library / player names
+  mobileShare: boolean // 모바일 공유: .envelope in each library folder for Envelope 모바일 (core/mobile.ts)
 }
 
 export interface ProgressEvent {

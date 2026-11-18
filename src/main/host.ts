@@ -485,6 +485,36 @@ function open(): EnvStatus {
 
 export const envCore = (): EnvCore | null => (status.ready ? core : null)
 
+// 모바일 공유 (core/mobile.ts): every few seconds the phone's changes are
+// applied, and the pack is written again once the library has stopped
+// changing (same between two ticks — not every 5 s while something plays).
+const MOBILE_TICK_MS = 10_000
+let mobileTimer: NodeJS.Timeout | null = null
+let mobileBusy = false
+const mobileSeen = new Map<string, string>() // root → hash at the last tick
+const mobileWritten = new Map<string, string>() // root → hash of the pack on disk
+async function mobileTick(): Promise<void> {
+  if (!status.ready || mobileBusy) return
+  mobileBusy = true
+  try {
+    for (const root of core.mobileRoots()) {
+      try {
+        if (await core.applyMobileEdits(root)) changed()
+        const d = core.mobileDraft(root)
+        const settled = mobileSeen.get(root) === d.hash
+        mobileSeen.set(root, d.hash)
+        if (!settled || mobileWritten.get(root) === d.hash) continue
+        await core.writeMobilePack(d, opts.appVersion)
+        mobileWritten.set(root, d.hash)
+      } catch {
+        // folder busy / gone — the next tick tries again
+      }
+    }
+  } finally {
+    mobileBusy = false
+  }
+}
+
 // Background work once the Env screen is shown (idempotent): pick up works
 // added or removed while the app was closed.
 let started = false
@@ -493,9 +523,23 @@ export function startEnv(): void {
   started = true
   // No scan at launch: the library is what the DB holds until the user scans
   // (설정 › 다시 스캔, F5, or adding a folder).
+  mobileTimer = setInterval(() => void mobileTick(), MOBILE_TICK_MS)
+  void mobileTick()
 }
 
 export function closeEnv(): void {
+  if (mobileTimer) clearInterval(mobileTimer)
+  mobileTimer = null
+  // what changed since the last pack (no await possible here)
+  if (opened)
+    for (const root of core.mobileRoots()) {
+      try {
+        const d = core.mobileDraft(root)
+        if (mobileWritten.get(root) !== d.hash) core.writeMobilePackSync(d, opts.appVersion)
+      } catch {
+        /* folder gone — the next start writes it */
+      }
+    }
   if (opened) core.close()
   opened = false
   releaseLock()

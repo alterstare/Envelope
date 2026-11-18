@@ -244,6 +244,15 @@ export default function SettingsView(): JSX.Element | null {
           </div>
         </section>
         <section>
+          <h3>모바일 공유</h3>
+          <Row
+            label="Envelope 모바일과 공유"
+            hint="켜면 라이브러리 폴더마다 .envelope 폴더에 작품 정보(복구 · 번역한 이름, DLsite 정보, 표지, 프로그램 안의 자막)와 즐겨찾기 · 평점 · 그룹 · 이어 듣기 · 북마크 · 자막 싱크를 남기고, 휴대폰에서 바꾼 것을 받아 반영합니다. NAS의 라이브러리 폴더를 휴대폰에서 열면 같은 기록을 씁니다. 작품 파일은 바꾸지 않습니다."
+          >
+            <Seg value={s.mobileShare ? 'on' : 'off'} options={[['on', '켜기'], ['off', '끄기']]} onChange={(v) => void save({ mobileShare: v === 'on' })} />
+          </Row>
+        </section>
+        <section>
           <h3>작품 정보</h3>
           <Row label="제목 표시" hint="DLsite 제목은 작품 코드로 가져옵니다. 폴더 이름이 작품 코드뿐인 작품은 스캔할 때 자동으로 가져옵니다.">
             <Seg

@@ -650,3 +650,139 @@ export function removeTrackSub(db: Db, path: string): void {
     db.prepare('UPDATE tracks SET subs_json = ? WHERE id = ?').run(JSON.stringify(subs), t.id)
   }
 }
+
+// ---- 모바일 정보 파일 (core/mobile.ts) ----
+
+export interface MobileWorkRow {
+  id: number
+  path: string
+  root: string
+  code: string | null
+  title: string // shown
+  folderTitle: string
+  dlTitle: string | null
+  cover: string | null // shown cover (absolute)
+  images: string[]
+  addedAt: number
+  circle: string | null
+  voices: string[]
+  tags: { ko: string; ja: string }[]
+  content: WorkContent
+  age: WorkAge
+  lang: WorkLang
+  mojibake: boolean
+  sePref: SePref | null
+  edition: string | null
+  favorite: boolean
+  rank: number
+  plays: number
+  lastPlayedAt: number | null
+  lastGroup: string | null
+  groups: string[]
+  progress: Record<string, { position: number; duration: number | null; at: number }>
+  offsets: Record<string, number>
+  bookmarks: { groupKey: string; position: number; name: string; createdAt: number }[]
+  tracks: {
+    id: number
+    path: string
+    title: string
+    ext: string
+    kind: 'audio' | 'video'
+    role: 'main' | 'extra' | 'sample'
+    edition: string
+    editionKey: string
+    se: 'on' | 'off' | 'unknown'
+    formatDir: string
+    groupKey: string
+    sort: number
+    duration: number | null
+    bitrate: number | null
+    relDir: string
+    subs: SubFile[]
+  }[]
+}
+
+// Every work under a library folder with all its tracks (every edition and
+// version) and what the user did with it — what Envelope 모바일 needs.
+export function mobileWorkRows(db: Db, s: Settings, root: string): MobileWorkRow[] {
+  const works = db.prepare('SELECT * FROM works WHERE root = ?').all(root) as (WorkRow & { root: string })[]
+  if (!works.length) return []
+  const names = shownNames(db, s)
+  const tracks = byWork(withAppSubs(db, db.prepare('SELECT t.* FROM tracks t JOIN works w ON w.id = t.work_id WHERE w.root = ?').all(root) as TrackRow[]))
+  const progress = new Map<number, Record<string, { position: number; duration: number | null; at: number }>>()
+  for (const r of db.prepare('SELECT work_id, group_key, position, duration, played_at FROM progress').all() as {
+    work_id: number
+    group_key: string
+    position: number
+    duration: number | null
+    played_at: number
+  }[]) {
+    const m = progress.get(r.work_id) ?? {}
+    m[r.group_key] = { position: r.position, duration: r.duration, at: r.played_at }
+    progress.set(r.work_id, m)
+  }
+  const offsets = offsetsOf(db)
+  const groupNames = new Map((db.prepare('SELECT id, name FROM groups').all() as { id: number; name: string }[]).map((g) => [g.id, g.name]))
+  const groupIds = groupIdsOf(db)
+  const appLangs = appLangsOf(db)
+  const marks = new Map<number, MobileWorkRow['bookmarks']>()
+  for (const b of db.prepare('SELECT work_id, group_key, position, name, created_at FROM bookmarks ORDER BY position').all() as {
+    work_id: number
+    group_key: string
+    position: number
+    name: string
+    created_at: number
+  }[]) {
+    const l = marks.get(b.work_id) ?? []
+    l.push({ groupKey: b.group_key, position: b.position, name: b.name, createdAt: b.created_at })
+    marks.set(b.work_id, l)
+  }
+  return works.map((w) => ({
+    id: w.id,
+    path: w.path,
+    root: w.root,
+    code: w.code,
+    title: nameTitle(w, s, names),
+    folderTitle: w.title,
+    dlTitle: w.dl_title,
+    cover: shownCover(w, s),
+    images: JSON.parse(w.images_json) as string[],
+    addedAt: w.added_at,
+    circle: w.dl_circle,
+    voices: w.dl_voices ? (JSON.parse(w.dl_voices) as string[]) : [],
+    tags: w.dl_tags ? (JSON.parse(w.dl_tags) as { ko: string; ja: string }[]) : [],
+    content: contentOf(w, appLangs.get(w.id)),
+    age: ageOf(w),
+    lang: workLang(w),
+    mojibake: !!w.mojibake,
+    sePref: w.se_pref,
+    edition: w.edition,
+    favorite: !!w.favorite,
+    rank: w.rank,
+    plays: w.play_count,
+    lastPlayedAt: w.last_played_at,
+    lastGroup: w.last_group,
+    groups: (groupIds.get(w.id) ?? []).map((g) => groupNames.get(g)).filter((x): x is string => !!x),
+    progress: progress.get(w.id) ?? {},
+    offsets: Object.fromEntries(offsets.get(w.id) ?? new Map()),
+    bookmarks: marks.get(w.id) ?? [],
+    tracks: (tracks.get(w.id) ?? []).map((t) => ({
+      id: t.id,
+      path: t.path,
+      title: names?.get(t.path) ?? t.title,
+      ext: t.ext,
+      kind: t.kind,
+      role: t.role,
+      edition: t.edition,
+      editionKey: t.edition_key,
+      se: t.se,
+      formatDir: t.format_dir,
+      groupKey: t.group_key,
+      sort: t.sort,
+      duration: t.duration,
+      bitrate: t.bitrate,
+      relDir: t.rel_dir,
+      subs: JSON.parse(t.subs_json) as SubFile[]
+    }))
+  }))
+}

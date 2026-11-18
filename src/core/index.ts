@@ -34,6 +34,7 @@ import type { NameStatus, ScriptPreview, ScriptSource, ScriptSubOptions, WorkCon
 import { existsSync } from 'fs'
 import * as originals from './originals'
 import * as dupes from './dupes'
+import * as mobile from './mobile'
 import { mergeGlossary, parseGlossaryText } from './glossaryText'
 
 export interface CorePaths {
@@ -169,6 +170,28 @@ export class EnvCore {
 
   settings(): Settings {
     return loadSettings(this.db)
+  }
+
+  // ---- 모바일 공유 (.envelope in each library folder, mobile.ts) ----
+
+  // Library folders shared with Envelope 모바일 (setting on, folder there).
+  mobileRoots(): string[] {
+    const s = this.settings()
+    return s.mobileShare ? s.libraryDirs.filter((d) => existsSync(d)) : []
+  }
+  mobileDraft(root: string): mobile.DraftPack {
+    return mobile.draftPack(this.db, this.settings(), root)
+  }
+  async writeMobilePack(d: mobile.DraftPack, appVersion: string): Promise<void> {
+    await mobile.writePack(d, appVersion, this.paths.thumbsDir)
+  }
+  writeMobilePackSync(d: mobile.DraftPack, appVersion: string): void {
+    mobile.writePackSync(d, appVersion)
+  }
+  // The phone's changes in a library folder → applied (count of changes).
+  async applyMobileEdits(root: string): Promise<number> {
+    const files = await mobile.pendingEdits(root)
+    return files.length ? mobile.applyEdits(this.db, root, files) : 0
   }
 
   saveSettings(patch: Partial<Settings>): Settings {
